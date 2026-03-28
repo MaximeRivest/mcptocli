@@ -10,6 +10,7 @@ import (
 type Invocation struct {
 	ProgramName        string
 	ExposedCommandName string
+	ImplicitBind       bool // true when server name used as first arg, not via exposed shim
 }
 
 // DetectInvocation determines whether the binary was invoked as mcp2cli or as
@@ -61,6 +62,18 @@ func RewriteArgsForExposedMode(inv Invocation, args []string) []string {
 func IsReservedExposedCommand(name string) bool {
 	switch name {
 	case "help", "completion", "version", "login", "tools", "tool", "resources", "resource", "prompts", "prompt", "shell", "doctor":
+		return true
+	default:
+		return false
+	}
+}
+
+// IsKnownRootCommand reports whether a name is a built-in mcp2cli subcommand.
+func IsKnownRootCommand(name string) bool {
+	switch name {
+	case "help", "completion", "version", "add", "ls", "rm", "expose", "unexpose",
+		"login", "tools", "tool", "resources", "resource", "prompts", "prompt",
+		"shell", "doctor":
 		return true
 	default:
 		return false

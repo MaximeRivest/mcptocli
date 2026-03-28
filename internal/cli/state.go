@@ -62,9 +62,22 @@ func (s *State) BoundServer() (*config.Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	server, err := repo.ResolveExposedCommand(s.Options.Invocation.ExposedCommandName)
+
+	name := s.Options.Invocation.ExposedCommandName
+
+	// Implicit bind: "mcp2cli weather ..." — resolve by server name directly
+	if s.Options.Invocation.ImplicitBind {
+		server, err := repo.ResolveServer(name)
+		if err != nil {
+			return nil, exitcode.WithHint(exitcode.Wrapf(exitcode.Config, err, "server %q not found", name), "run `mcp2cli ls`")
+		}
+		return server, nil
+	}
+
+	// Exposed command: "mcp-weather ..." or "wea ..." — resolve by exposed name
+	server, err := repo.ResolveExposedCommand(name)
 	if err != nil {
-		return nil, exitcode.WithHint(exitcode.Wrapf(exitcode.Config, err, "exposed command %q is not registered", s.Options.Invocation.ExposedCommandName), "run `mcp2cli ls`")
+		return nil, exitcode.WithHint(exitcode.Wrapf(exitcode.Config, err, "exposed command %q is not registered", name), "run `mcp2cli ls`")
 	}
 	return server, nil
 }

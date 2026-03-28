@@ -165,9 +165,12 @@ func parseValue(arg inspect.ArgSpec, text string) (any, error) {
 		if err != nil {
 			return nil, err
 		}
-		var value map[string]any
+		// Try JSON first; if it fails, treat as plain string.
+		// Many servers define args without a type field, which defaults
+		// to "object" even though they really expect strings.
+		var value any
 		if err := json.Unmarshal(data, &value); err != nil {
-			return nil, err
+			return string(data), nil
 		}
 		return value, nil
 	case "array":
