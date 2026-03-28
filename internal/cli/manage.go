@@ -6,7 +6,9 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	"github.com/adrg/xdg"
 	"github.com/maximerivest/mcp2cli/internal/config"
+	"github.com/maximerivest/mcp2cli/internal/daemon"
 	"github.com/maximerivest/mcp2cli/internal/expose"
 	"github.com/spf13/cobra"
 )
@@ -145,7 +147,11 @@ func newListCommand(state *State) *cobra.Command {
 				if server.URL != "" {
 					target = server.URL
 				}
-				fmt.Fprintf(writer, "%s\t%s\n", server.Name, target)
+				status := ""
+				if server.Command != "" && daemon.IsRunning(xdg.DataHome, server.Name) {
+					status = " (up)"
+				}
+				fmt.Fprintf(writer, "%s%s\t%s\n", server.Name, status, target)
 			}
 			return writer.Flush()
 		},
