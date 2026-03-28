@@ -6,18 +6,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func newToolsCommand(state *State) *cobra.Command {
-	cmd := newNotImplementedCommand(state, "tools", "List tools or inspect one tool")
-	cmd.Use = "tools [server] [tool]"
-	return cmd
-}
-
-func newToolCommand(state *State) *cobra.Command {
-	cmd := newNotImplementedCommand(state, "tool", "Invoke a tool")
-	cmd.Use = "tool [server] <tool> [args...]"
-	return cmd
-}
-
 func newNotImplementedCommand(state *State, use, short string) *cobra.Command {
 	return &cobra.Command{
 		Use:   use,

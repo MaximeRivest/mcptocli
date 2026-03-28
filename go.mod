@@ -4,6 +4,7 @@ go 1.24
 
 require (
 	github.com/adrg/xdg v0.5.3
+	github.com/kballard/go-shellquote v0.0.0-20180428030007-95032a82bc51
 	github.com/spf13/cobra v1.9.1
 	gopkg.in/yaml.v3 v3.0.1
 )
