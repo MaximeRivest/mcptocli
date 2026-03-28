@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/maximerivest/mcp2cli/internal/exitcode"
 	"github.com/maximerivest/mcp2cli/internal/schema/inspect"
 )
 
@@ -20,7 +21,7 @@ func ParseToolArguments(spec *inspect.ToolSpec, tokens []string) (map[string]any
 		if len(tokens) == 0 {
 			return applyDefaults(spec, map[string]any{}), nil
 		}
-		return nil, fmt.Errorf("tool %q requires --input because its schema is too complex for flags and positionals", spec.CLIName)
+		return nil, exitcode.Newf(exitcode.Usage, "tool %q requires --input because its schema is too complex for flags and positionals", spec.CLIName)
 	}
 
 	result := map[string]any{}
@@ -33,12 +34,12 @@ func ParseToolArguments(spec *inspect.ToolSpec, tokens []string) (map[string]any
 		if token == "--" {
 			for i = i + 1; i < len(tokens); i++ {
 				if positionalIndex >= len(positional) {
-					return nil, fmt.Errorf("unexpected positional argument %q", tokens[i])
+					return nil, exitcode.Newf(exitcode.Usage, "unexpected positional argument %q", tokens[i])
 				}
 				arg := positional[positionalIndex]
 				value, err := parseValue(arg, tokens[i])
 				if err != nil {
-					return nil, fmt.Errorf("parse %s: %w", arg.CLIName, err)
+					return nil, exitcode.Wrapf(exitcode.Usage, err, "parse %s", arg.CLIName)
 				}
 				result[arg.Name] = value
 				positionalIndex++
@@ -55,7 +56,7 @@ func ParseToolArguments(spec *inspect.ToolSpec, tokens []string) (map[string]any
 			if strings.HasPrefix(name, "no-") {
 				arg, ok := spec.FindArgument(strings.TrimPrefix(name, "no-"))
 				if !ok || arg.Type != "boolean" {
-					return nil, fmt.Errorf("unknown flag --%s", name)
+					return nil, exitcode.Newf(exitcode.Usage, "unknown flag --%s", name)
 				}
 				result[arg.Name] = false
 				continue
@@ -67,7 +68,7 @@ func ParseToolArguments(spec *inspect.ToolSpec, tokens []string) (map[string]any
 			}
 			arg, ok := spec.FindArgument(name)
 			if !ok {
-				return nil, fmt.Errorf("unknown flag --%s", name)
+				return nil, exitcode.Newf(exitcode.Usage, "unknown flag --%s", name)
 			}
 
 			if arg.Type == "boolean" && !hasInline {
@@ -75,7 +76,7 @@ func ParseToolArguments(spec *inspect.ToolSpec, tokens []string) (map[string]any
 					i++
 					parsed, err := strconv.ParseBool(tokens[i])
 					if err != nil {
-						return nil, fmt.Errorf("parse --%s: %w", name, err)
+						return nil, exitcode.Wrapf(exitcode.Usage, err, "parse --%s", name)
 					}
 					result[arg.Name] = parsed
 				} else {
@@ -86,13 +87,13 @@ func ParseToolArguments(spec *inspect.ToolSpec, tokens []string) (map[string]any
 			if !hasInline {
 				i++
 				if i >= len(tokens) {
-					return nil, fmt.Errorf("missing value for --%s", name)
+					return nil, exitcode.Newf(exitcode.Usage, "missing value for --%s", name)
 				}
 				valueText = tokens[i]
 			}
 			value, err := parseValue(arg, valueText)
 			if err != nil {
-				return nil, fmt.Errorf("parse --%s: %w", name, err)
+				return nil, exitcode.Wrapf(exitcode.Usage, err, "parse --%s", name)
 			}
 			if arg.Type == "array" {
 				existing, _ := result[arg.Name].([]any)
@@ -104,15 +105,15 @@ func ParseToolArguments(spec *inspect.ToolSpec, tokens []string) (map[string]any
 		}
 
 		if seenFlag {
-			return nil, fmt.Errorf("unexpected positional argument %q after flags", token)
+			return nil, exitcode.Newf(exitcode.Usage, "unexpected positional argument %q after flags", token)
 		}
 		if positionalIndex >= len(positional) {
-			return nil, fmt.Errorf("unexpected positional argument %q", token)
+			return nil, exitcode.Newf(exitcode.Usage, "unexpected positional argument %q", token)
 		}
 		arg := positional[positionalIndex]
 		value, err := parseValue(arg, token)
 		if err != nil {
-			return nil, fmt.Errorf("parse %s: %w", arg.CLIName, err)
+			return nil, exitcode.Wrapf(exitcode.Usage, err, "parse %s", arg.CLIName)
 		}
 		result[arg.Name] = value
 		positionalIndex++
@@ -122,7 +123,7 @@ func ParseToolArguments(spec *inspect.ToolSpec, tokens []string) (map[string]any
 	for _, arg := range spec.Arguments {
 		if arg.Required {
 			if _, ok := result[arg.Name]; !ok {
-				return nil, fmt.Errorf("missing required argument: %s", arg.CLIName)
+				return nil, exitcode.Newf(exitcode.Usage, "missing required argument: %s", arg.CLIName)
 			}
 		}
 	}

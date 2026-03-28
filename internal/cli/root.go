@@ -52,7 +52,7 @@ func NewRootCommand(opts Options) (*cobra.Command, error) {
 		root.AddCommand(newUnexposeCommand(state))
 	}
 
-	root.AddCommand(newNotImplementedCommand(state, "login", "Trigger auth ahead of time"))
+	root.AddCommand(newLoginCommand(state))
 	root.AddCommand(newToolsCommand(state))
 	root.AddCommand(newToolCommand(state))
 	root.AddCommand(newNotImplementedCommand(state, "resources", "List resources or inspect one resource"))
@@ -60,7 +60,7 @@ func NewRootCommand(opts Options) (*cobra.Command, error) {
 	root.AddCommand(newNotImplementedCommand(state, "prompts", "List prompts or inspect one prompt"))
 	root.AddCommand(newNotImplementedCommand(state, "prompt", "Render a prompt"))
 	root.AddCommand(newNotImplementedCommand(state, "shell", "Open an interactive MCP shell"))
-	root.AddCommand(newNotImplementedCommand(state, "doctor", "Diagnose connection, auth, and config issues"))
+	root.AddCommand(newDoctorCommand(state))
 
 	return root, nil
 }

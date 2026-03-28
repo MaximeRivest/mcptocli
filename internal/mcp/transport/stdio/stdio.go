@@ -3,7 +3,6 @@ package stdio
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -12,6 +11,7 @@ import (
 	"time"
 
 	"github.com/kballard/go-shellquote"
+	"github.com/maximerivest/mcp2cli/internal/exitcode"
 )
 
 // Transport manages a stdio-based MCP server subprocess.
@@ -29,10 +29,10 @@ type Transport struct {
 func Start(parent context.Context, command, cwd string, env map[string]string) (*Transport, error) {
 	argv, err := shellquote.Split(command)
 	if err != nil {
-		return nil, fmt.Errorf("parse command %q: %w", command, err)
+		return nil, exitcode.Wrapf(exitcode.Usage, err, "parse command %q", command)
 	}
 	if len(argv) == 0 {
-		return nil, fmt.Errorf("command cannot be empty")
+		return nil, exitcode.New(exitcode.Config, "command cannot be empty")
 	}
 
 	ctx, cancel := context.WithCancel(parent)
@@ -51,12 +51,12 @@ func Start(parent context.Context, command, cwd string, env map[string]string) (
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		cancel()
-		return nil, fmt.Errorf("open stdin pipe: %w", err)
+		return nil, exitcode.Wrap(exitcode.Internal, err, "open stdin pipe")
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		cancel()
-		return nil, fmt.Errorf("open stdout pipe: %w", err)
+		return nil, exitcode.Wrap(exitcode.Internal, err, "open stdout pipe")
 	}
 	transport := &Transport{
 		cmd:    cmd,
@@ -69,7 +69,7 @@ func Start(parent context.Context, command, cwd string, env map[string]string) (
 
 	if err := cmd.Start(); err != nil {
 		cancel()
-		return nil, fmt.Errorf("start command %q: %w", argv[0], err)
+		return nil, exitcode.Wrapf(exitcode.Transport, err, "start command %q", argv[0])
 	}
 	go func() {
 		transport.done <- cmd.Wait()
@@ -99,7 +99,7 @@ func (t *Transport) Close() error {
 		select {
 		case err := <-t.done:
 			if err != nil && !isProcessExitAfterCancel(err) {
-				closeErr = fmt.Errorf("wait for subprocess: %w%s", err, t.stderrSuffix())
+				closeErr = exitcode.Wrapf(exitcode.Transport, err, "wait for subprocess%s", t.stderrSuffix())
 			}
 			return
 		case <-time.After(300 * time.Millisecond):
@@ -109,7 +109,7 @@ func (t *Transport) Close() error {
 		select {
 		case err := <-t.done:
 			if err != nil && !isProcessExitAfterCancel(err) {
-				closeErr = fmt.Errorf("wait for subprocess after cancel: %w%s", err, t.stderrSuffix())
+				closeErr = exitcode.Wrapf(exitcode.Transport, err, "wait for subprocess after cancel%s", t.stderrSuffix())
 			}
 		case <-time.After(2 * time.Second):
 			_ = t.cmd.Process.Kill()

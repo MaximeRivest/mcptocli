@@ -1,11 +1,27 @@
 package serverref
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/maximerivest/mcp2cli/internal/config"
+	"github.com/maximerivest/mcp2cli/internal/exitcode"
 )
+
+// Options contains CLI-level overrides used to resolve a server reference.
+type Options struct {
+	ExplicitName      string
+	Command           string
+	URL               string
+	CWD               string
+	Env               []string
+	Headers           []string
+	Auth              string
+	BearerEnv         string
+	OAuthAuthorizeURL string
+	OAuthTokenURL     string
+	OAuthClientID     string
+	OAuthScopes       []string
+}
 
 // Resolved describes a server selected from config or ephemeral CLI flags.
 type Resolved struct {
@@ -14,30 +30,30 @@ type Resolved struct {
 }
 
 // Resolve selects the effective server for a command.
-func Resolve(repo *config.Repository, bound *config.Server, explicitName, command, url, cwd string, envVars []string) (*Resolved, error) {
-	if command != "" && url != "" {
-		return nil, fmt.Errorf("--command and --url are mutually exclusive")
+func Resolve(repo *config.Repository, bound *config.Server, opts Options) (*Resolved, error) {
+	if opts.Command != "" && opts.URL != "" {
+		return nil, exitcode.New(exitcode.Usage, "--command and --url are mutually exclusive")
 	}
-	if bound != nil && (explicitName != "" || command != "" || url != "") {
-		return nil, fmt.Errorf("bound exposed commands do not accept an explicit server, --command, or --url")
+	if bound != nil && (opts.ExplicitName != "" || opts.Command != "" || opts.URL != "") {
+		return nil, exitcode.New(exitcode.Usage, "bound exposed commands do not accept an explicit server, --command, or --url")
 	}
 
 	if bound != nil {
 		server := cloneServer(bound)
-		if err := applyOverrides(server, cwd, envVars); err != nil {
+		if err := applyOverrides(server, opts); err != nil {
 			return nil, err
 		}
 		return &Resolved{DisplayName: server.Name, Server: server}, nil
 	}
 
-	if command != "" || url != "" {
+	if opts.Command != "" || opts.URL != "" {
 		server := &config.Server{
 			Name:    "(direct)",
 			Source:  config.SourceEphemeral,
-			Command: strings.TrimSpace(command),
-			URL:     strings.TrimSpace(url),
+			Command: strings.TrimSpace(opts.Command),
+			URL:     strings.TrimSpace(opts.URL),
 		}
-		if err := applyOverrides(server, cwd, envVars); err != nil {
+		if err := applyOverrides(server, opts); err != nil {
 			return nil, err
 		}
 		display := server.Command
@@ -47,36 +63,65 @@ func Resolve(repo *config.Repository, bound *config.Server, explicitName, comman
 		return &Resolved{DisplayName: display, Server: server}, nil
 	}
 
-	if explicitName == "" {
-		return nil, fmt.Errorf("a registered server name or one of --command/--url is required")
+	if opts.ExplicitName == "" {
+		return nil, exitcode.New(exitcode.Usage, "a registered server name or one of --command/--url is required")
 	}
 
-	server, err := repo.ResolveServer(explicitName)
+	server, err := repo.ResolveServer(opts.ExplicitName)
 	if err != nil {
-		return nil, err
+		return nil, exitcode.WithHint(exitcode.Wrapf(exitcode.Config, err, "server %q not found", opts.ExplicitName), "run `mcp2cli ls`")
 	}
-	if err := applyOverrides(server, cwd, envVars); err != nil {
+	if err := applyOverrides(server, opts); err != nil {
 		return nil, err
 	}
 	return &Resolved{DisplayName: server.Name, Server: server}, nil
 }
 
-func applyOverrides(server *config.Server, cwd string, envVars []string) error {
-	if cwd != "" {
-		server.CWD = cwd
+func applyOverrides(server *config.Server, opts Options) error {
+	if opts.CWD != "" {
+		server.CWD = opts.CWD
 	}
-	if len(envVars) == 0 {
-		return nil
+	if opts.Auth != "" {
+		server.Auth = opts.Auth
 	}
-	if server.Env == nil {
-		server.Env = map[string]string{}
+	if opts.BearerEnv != "" {
+		server.BearerEnv = opts.BearerEnv
 	}
-	for _, entry := range envVars {
-		key, value, ok := strings.Cut(entry, "=")
-		if !ok || key == "" {
-			return fmt.Errorf("invalid --env value %q, expected KEY=VALUE", entry)
+	if opts.OAuthAuthorizeURL != "" {
+		server.OAuthAuthorizeURL = opts.OAuthAuthorizeURL
+	}
+	if opts.OAuthTokenURL != "" {
+		server.OAuthTokenURL = opts.OAuthTokenURL
+	}
+	if opts.OAuthClientID != "" {
+		server.OAuthClientID = opts.OAuthClientID
+	}
+	if len(opts.OAuthScopes) > 0 {
+		server.OAuthScopes = append([]string(nil), opts.OAuthScopes...)
+	}
+	if len(opts.Env) > 0 {
+		if server.Env == nil {
+			server.Env = map[string]string{}
 		}
-		server.Env[key] = value
+		for _, entry := range opts.Env {
+			key, value, ok := strings.Cut(entry, "=")
+			if !ok || key == "" {
+				return exitcode.Newf(exitcode.Usage, "invalid --env value %q, expected KEY=VALUE", entry)
+			}
+			server.Env[key] = value
+		}
+	}
+	if len(opts.Headers) > 0 {
+		if server.Headers == nil {
+			server.Headers = map[string]string{}
+		}
+		for _, entry := range opts.Headers {
+			key, value, ok := strings.Cut(entry, ":")
+			if !ok || strings.TrimSpace(key) == "" {
+				return exitcode.Newf(exitcode.Usage, "invalid --header value %q, expected Key: Value", entry)
+			}
+			server.Headers[strings.TrimSpace(key)] = strings.TrimSpace(value)
+		}
 	}
 	return nil
 }
@@ -100,6 +145,9 @@ func cloneServer(server *config.Server) *config.Server {
 	}
 	if server.Roots != nil {
 		clone.Roots = append([]string(nil), server.Roots...)
+	}
+	if server.OAuthScopes != nil {
+		clone.OAuthScopes = append([]string(nil), server.OAuthScopes...)
 	}
 	if server.ExposeAs != nil {
 		clone.ExposeAs = append([]string(nil), server.ExposeAs...)

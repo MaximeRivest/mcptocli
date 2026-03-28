@@ -29,6 +29,7 @@ type Paths struct {
 	GlobalConfig string
 	LocalConfig  string
 	ExposeBinDir string
+	TokenDir     string
 }
 
 // File is the on-disk configuration format.
@@ -47,19 +48,23 @@ type DefaultsConfig struct {
 
 // Server contains a registered server definition.
 type Server struct {
-	Name      string            `yaml:"-"`
-	Source    ConfigSource      `yaml:"-"`
-	Transport string            `yaml:"transport,omitempty"`
-	Command   string            `yaml:"command,omitempty"`
-	URL       string            `yaml:"url,omitempty"`
-	CWD       string            `yaml:"cwd,omitempty"`
-	Env       map[string]string `yaml:"env,omitempty"`
-	Roots     []string          `yaml:"roots,omitempty"`
-	Headers   map[string]string `yaml:"headers,omitempty"`
-	Auth      string            `yaml:"auth,omitempty"`
-	BearerEnv string            `yaml:"bearer_env,omitempty"`
-	ExposeAs  []string          `yaml:"expose,omitempty"`
-	Timeout   string            `yaml:"timeout,omitempty"`
+	Name              string            `yaml:"-"`
+	Source            ConfigSource      `yaml:"-"`
+	Transport         string            `yaml:"transport,omitempty"`
+	Command           string            `yaml:"command,omitempty"`
+	URL               string            `yaml:"url,omitempty"`
+	CWD               string            `yaml:"cwd,omitempty"`
+	Env               map[string]string `yaml:"env,omitempty"`
+	Roots             []string          `yaml:"roots,omitempty"`
+	Headers           map[string]string `yaml:"headers,omitempty"`
+	Auth              string            `yaml:"auth,omitempty"`
+	BearerEnv         string            `yaml:"bearer_env,omitempty"`
+	OAuthAuthorizeURL string            `yaml:"oauth_authorize_url,omitempty"`
+	OAuthTokenURL     string            `yaml:"oauth_token_url,omitempty"`
+	OAuthClientID     string            `yaml:"oauth_client_id,omitempty"`
+	OAuthScopes       []string          `yaml:"oauth_scopes,omitempty"`
+	ExposeAs          []string          `yaml:"expose,omitempty"`
+	Timeout           string            `yaml:"timeout,omitempty"`
 }
 
 // Repository provides read/write access to config files.
@@ -81,6 +86,7 @@ func DefaultPaths(cwd string) (Paths, error) {
 		GlobalConfig: filepath.Join(xdg.ConfigHome, "mcp2cli", "config.yaml"),
 		LocalConfig:  filepath.Join(cwd, ".mcp2cli.yaml"),
 		ExposeBinDir: filepath.Join(xdg.DataHome, "mcp2cli", "bin"),
+		TokenDir:     filepath.Join(xdg.DataHome, "mcp2cli", "tokens"),
 	}, nil
 }
 
@@ -505,6 +511,9 @@ func cloneServer(server *Server) *Server {
 	}
 	if server.Roots != nil {
 		clone.Roots = append([]string(nil), server.Roots...)
+	}
+	if server.OAuthScopes != nil {
+		clone.OAuthScopes = append([]string(nil), server.OAuthScopes...)
 	}
 	if server.ExposeAs != nil {
 		clone.ExposeAs = append([]string(nil), server.ExposeAs...)

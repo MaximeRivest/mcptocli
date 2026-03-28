@@ -10,13 +10,14 @@ import (
 	"sync/atomic"
 )
 
-type responseError struct {
+// RPCError is a JSON-RPC error object returned by the server.
+type RPCError struct {
 	Code    int             `json:"code"`
 	Message string          `json:"message"`
 	Data    json.RawMessage `json:"data,omitempty"`
 }
 
-func (e *responseError) Error() string {
+func (e *RPCError) Error() string {
 	if e == nil {
 		return ""
 	}
@@ -29,7 +30,7 @@ type envelope struct {
 	Method  string          `json:"method,omitempty"`
 	Params  json.RawMessage `json:"params,omitempty"`
 	Result  json.RawMessage `json:"result,omitempty"`
-	Error   *responseError  `json:"error,omitempty"`
+	Error   *RPCError       `json:"error,omitempty"`
 }
 
 // Client is a minimal transport-agnostic JSON-RPC 2.0 client.

@@ -6,6 +6,7 @@ import (
 
 	"github.com/maximerivest/mcp2cli/internal/app"
 	"github.com/maximerivest/mcp2cli/internal/cli"
+	"github.com/maximerivest/mcp2cli/internal/exitcode"
 )
 
 var (
@@ -28,14 +29,14 @@ func run() int {
 		Invocation: invocation,
 	})
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+		fmt.Fprintln(os.Stderr, exitcode.Format(err))
+		return exitcode.Code(err)
 	}
 
 	root.SetArgs(app.RewriteArgsForExposedMode(invocation, os.Args[1:]))
 	if err := root.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+		fmt.Fprintln(os.Stderr, exitcode.Format(err))
+		return exitcode.Code(err)
 	}
 
 	return 0

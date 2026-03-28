@@ -753,6 +753,8 @@ Implement a transport-agnostic JSON-RPC core with:
 Implement the modern HTTP transport first, then add compatibility mode(s) if needed for specific servers.
 Keep the transport interface small so additional HTTP variants do not affect CLI UX.
 
+**Implementation note:** The current implementation supports the straightforward JSON-RPC-over-HTTP POST path for remote MCP servers. Compatibility layers for SSE and streamable HTTP style transports are still future work.
+
 ---
 
 ## Auth plan
@@ -1456,3 +1458,243 @@ That path gets to visible value quickly while protecting the hardest part of the
 
  If you want, I can continue immediately with the stdio transport and real tools support.
 ```
+
+Commit:
+- bf4d360 — feat: bootstrap CLI and exposed command support
+
+# Round 2:
+
+## AI response
+
+```text
+  Continued implementation, following IMPLEMENTATION_PLAN.md Phase 2.
+
+ What’s now working:
+ - real stdio MCP client
+ - JSON-RPC framing + request/response handling
+ - MCP initialize handshake
+ - tools/list
+ - tools/call
+ - mcp2cli tools <server>
+ - mcp2cli tools --command '...'
+ - mcp2cli tool <server> <tool> --input ...
+ - mcp2cli tool --command '...' <tool> --input ...
+ - exposed commands also work:
+     - wea tools
+     - wea echo --input '{"message":"hi"}'
+
+ Implemented files:
+ - internal/serverref/resolve.go
+ - internal/mcp/types/types.go
+ - internal/mcp/jsonrpc/framing.go
+ - internal/mcp/jsonrpc/client.go
+ - internal/mcp/transport/stdio/stdio.go
+ - internal/mcp/client/client.go
+ - internal/cli/tools.go
+ - testdata/servers/stdiofixture/main.go
+ - tests:
+     - internal/mcp/client/client_test.go
+     - internal/cli/tools_test.go
+
+ Also updated:
+ - go.mod
+ - go.sum
+ - internal/cli/stubs.go
+
+ Validation:
+ - go test ./... passes
+ - manual smoke tests passed for:
+     - registered server
+     - direct --command
+     - exposed command shorthand
+
+ Current scope/caveat:
+ - tool currently supports the Phase 2 raw JSON path via --input
+ - schema-driven flags/positionals like --latitude / --longitude are not implemented yet
+ - HTTP transport is still not implemented
+
+ Example now:
+
+ bash
+   mcp2cli add weather --command 'go run /path/to/testdata/servers/stdiofixture'
+   mcp2cli tools weather
+   mcp2cli tool weather echo --input '{"message":"hello"}'
+
+   mcp2cli expose weather --as wea
+   wea tools
+   wea echo --input '{"message":"hi"}'
+
+
+ Uncommitted changes are in your working tree.
+
+ Next best step from the plan:
+ - move into Phase 3
+ - derive CLI args from tool schemas
+ - implement delightful tool inspection/usage rendering
+ - support:
+   bash
+     mcp-weather get-forecast --latitude 37.7 --longitude -122.4
+   
+```
+
+Commit:
+- 2868f12 — feat: add stdio MCP client and tool commands
+
+# Round 3:
+
+## AI response
+
+```text
+ Continued implementation, following IMPLEMENTATION_PLAN.md Phase 3.
+
+ What’s now added
+
+ - internal/naming/kebab.go
+     - camelCase / snake_case → kebab-case conversion
+ - internal/schema/inspect/inspect.go
+     - ordered JSON Schema parsing
+     - tool/arg inspection model
+ - internal/invoke/toolargs.go
+     - runtime parsing of tool args from:
+           - flags
+           - positionals
+           - repeated array flags
+           - @file / @-
+ - upgraded internal/cli/tools.go
+     - friendly tool inspection output
+     - real schema-driven tool invocation
+     - output modes:
+           - auto
+           - json
+           - yaml
+           - raw
+           - table where applicable
+ - tests for naming, schema inspection, arg parsing, and CLI flows
+
+ What works now
+
+ Tool inspection:
+
+ ```bash
+   mcp2cli tools weather get-forecast
+ ```
+
+ Now renders like:
+
+ ```text
+   NAME
+     get-forecast - Get weather forecast for a location
+
+   USAGE
+     mcp2cli tool weather get-forecast --latitude <float> --longitude <float>
+
+   ARGS
+     --latitude float   Required. Latitude of the location
+     --longitude float  Required. Longitude of the location
+ ```
+
+ Schema-driven invocation:
+
+ ```bash
+   mcp2cli tool weather get-forecast --latitude 37.7 --longitude -122.4
+   mcp2cli tool weather get-forecast 37.7 -122.4
+   wea get-forecast --latitude 1 --longitude 2
+ ```
+
+ Raw JSON fallback still works:
+
+ ```bash
+   mcp2cli tool weather echo --input '{"message":"hello"}'
+ ```
+
+ Output modes now supported on current tool flows:
+
+ ```bash
+   mcp2cli tools weather -o json
+   mcp2cli tools weather get-forecast -o yaml
+   mcp2cli tool weather get-forecast 1 2 -o json
+   mcp2cli tool weather get-forecast 1 2 -o raw
+ ```
+
+ Validation
+
+ - go test ./... passes
+
+ Current status vs plan
+
+ Done / started from Phase 3:
+ - ordered schema parsing
+ - runtime tool arg parser
+ - flags + positionals for simple schemas
+ - friendlier tool inspection output
+ - more output modes
+
+ Still not done from later phases:
+ - centralized stable exit code mapping
+ - HTTP transport
+ - resources/prompts
+ - shell mode
+ - auth flows
+```
+
+Commit: 7d09ee94eb2ebbe2e47243074d35f7882721aa00
+
+# Round 4:
+
+## AI response
+ Done — I committed the Phase 3 schema-driven work, then continued.
+
+ Commit:
+ - 7d09ee9 — feat: add schema-driven tool invocation
+
+ Then I implemented the next Phase 3 piece from IMPLEMENTATION_PLAN.md:
+ - stable error categories and exit codes
+ - kind CLI error formatting with hints
+ - better wrapping for:
+     - usage errors
+     - config/server resolution errors
+     - stdio transport errors
+     - protocol/server MCP errors
+
+ Added:
+ - internal/exitcode/exitcode.go
+ - internal/exitcode/exitcode_test.go
+
+ Updated:
+ - cmd/mcp2cli/main.go
+ - internal/cli/state.go
+ - internal/cli/tools.go
+ - internal/invoke/toolargs.go
+ - internal/mcp/client/client.go
+ - internal/mcp/jsonrpc/client.go
+ - internal/mcp/transport/stdio/stdio.go
+ - internal/serverref/resolve.go
+
+ What works now:
+ - missing args return exit code 2
+ - server/config issues return categorized errors
+ - stderr formatting looks like:
+
+ ```text
+   error: missing required argument: longitude
+   hint: run `mcp2cli tools weather get-forecast`
+ ```
+
+ and:
+
+ ```text
+   error: tool "nope" not found
+   hint: run `mcp2cli tools weather`
+ ```
+
+ Validation:
+ - go test ./... passes
+
+ Current working tree:
+ - code changes are not committed yet
+ - IMPLEMENTATION_PLAN.md is still modified in the repo and remains uncommitted
+
+ Next good step from the plan:
+ - continue polishing Phase 3 by improving renderers further and/or
+ - start Phase 5-style metadata commands (resources, prompts) once you want to widen
+ scope

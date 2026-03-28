@@ -10,6 +10,8 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/maximerivest/mcp2cli/internal/auth"
+	"github.com/maximerivest/mcp2cli/internal/exitcode"
 	"github.com/maximerivest/mcp2cli/internal/invoke"
 	mcpclient "github.com/maximerivest/mcp2cli/internal/mcp/client"
 	"github.com/maximerivest/mcp2cli/internal/mcp/types"
@@ -22,12 +24,19 @@ import (
 
 func newToolsCommand(state *State) *cobra.Command {
 	var (
-		command string
-		url     string
-		cwd     string
-		envVars []string
-		timeout time.Duration
-		output  string
+		command           string
+		url               string
+		cwd               string
+		envVars           []string
+		headers           []string
+		authMode          string
+		bearerEnv         string
+		oauthAuthorizeURL string
+		oauthTokenURL     string
+		oauthClientID     string
+		oauthScopes       []string
+		timeout           time.Duration
+		output            string
 	)
 
 	cmd := &cobra.Command{
@@ -52,24 +61,43 @@ func newToolsCommand(state *State) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			resolved, err := serverref.Resolve(repo, bound, explicitServer, command, url, cwd, envVars)
+			resolved, err := serverref.Resolve(repo, bound, serverref.Options{
+				ExplicitName:      explicitServer,
+				Command:           command,
+				URL:               url,
+				CWD:               cwd,
+				Env:               envVars,
+				Headers:           headers,
+				Auth:              authMode,
+				BearerEnv:         bearerEnv,
+				OAuthAuthorizeURL: oauthAuthorizeURL,
+				OAuthTokenURL:     oauthTokenURL,
+				OAuthClientID:     oauthClientID,
+				OAuthScopes:       oauthScopes,
+			})
 			if err != nil {
 				return err
 			}
-			if resolved.Server.URL != "" {
-				return fmt.Errorf("HTTP MCP servers are not implemented yet")
+
+			store, err := state.TokenStore()
+			if err != nil {
+				return err
+			}
+			resolvedHeaders, err := auth.HeadersForServer(store, resolved.Server)
+			if err != nil {
+				return err
 			}
 
 			ctx, cancel := context.WithTimeout(cmd.Context(), timeout)
 			defer cancel()
 
-			client, err := mcpclient.ConnectStdio(ctx, resolved.Server)
+			session, err := mcpclient.Connect(ctx, resolved.Server, resolvedHeaders)
 			if err != nil {
 				return err
 			}
-			defer func() { _ = client.Close() }()
+			defer func() { _ = session.Close() }()
 
-			tools, err := client.ListTools(ctx)
+			tools, err := session.ListTools(ctx)
 			if err != nil {
 				return err
 			}
@@ -78,7 +106,7 @@ func newToolsCommand(state *State) *cobra.Command {
 			if toolName != "" {
 				tool, ok := findTool(tools, toolName)
 				if !ok {
-					return fmt.Errorf("tool %q not found", toolName)
+					return exitcode.WithHint(exitcode.Newf(exitcode.Usage, "tool %q not found", toolName), toolsInspectHint(state, resolved, toolName))
 				}
 				spec, err := inspect.InspectTool(tool)
 				if err != nil {
@@ -95,6 +123,13 @@ func newToolsCommand(state *State) *cobra.Command {
 	cmd.Flags().StringVar(&url, "url", "", "Remote MCP server URL")
 	cmd.Flags().StringVar(&cwd, "cwd", "", "Working directory for local server commands")
 	cmd.Flags().StringSliceVar(&envVars, "env", nil, "Environment variable override in KEY=VALUE form (repeatable)")
+	cmd.Flags().StringSliceVar(&headers, "header", nil, "Additional HTTP header in Key: Value form (repeatable)")
+	cmd.Flags().StringVar(&authMode, "auth", "", "Authentication mode override (e.g. oauth)")
+	cmd.Flags().StringVar(&bearerEnv, "bearer-env", "", "Environment variable containing a bearer token")
+	cmd.Flags().StringVar(&oauthAuthorizeURL, "oauth-authorize-url", "", "OAuth authorize URL override")
+	cmd.Flags().StringVar(&oauthTokenURL, "oauth-token-url", "", "OAuth token URL override")
+	cmd.Flags().StringVar(&oauthClientID, "oauth-client-id", "", "OAuth client ID override")
+	cmd.Flags().StringSliceVar(&oauthScopes, "oauth-scope", nil, "OAuth scope (repeatable)")
 	cmd.Flags().DurationVar(&timeout, "timeout", mcpclient.DefaultTimeout(), "Request timeout")
 	cmd.Flags().StringVarP(&output, "output", "o", "auto", "Output format: auto, json, yaml, raw, or table")
 	return cmd
@@ -126,30 +161,49 @@ func newToolCommand(state *State) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			resolved, err := serverref.Resolve(repo, bound, parsed.ServerName, parsed.Command, parsed.URL, parsed.CWD, parsed.Env)
+			resolved, err := serverref.Resolve(repo, bound, serverref.Options{
+				ExplicitName:      parsed.ServerName,
+				Command:           parsed.Command,
+				URL:               parsed.URL,
+				CWD:               parsed.CWD,
+				Env:               parsed.Env,
+				Headers:           parsed.Headers,
+				Auth:              parsed.Auth,
+				BearerEnv:         parsed.BearerEnv,
+				OAuthAuthorizeURL: parsed.OAuthAuthorizeURL,
+				OAuthTokenURL:     parsed.OAuthTokenURL,
+				OAuthClientID:     parsed.OAuthClientID,
+				OAuthScopes:       parsed.OAuthScopes,
+			})
 			if err != nil {
 				return err
 			}
-			if resolved.Server.URL != "" {
-				return fmt.Errorf("HTTP MCP servers are not implemented yet")
+
+			store, err := state.TokenStore()
+			if err != nil {
+				return err
+			}
+			resolvedHeaders, err := auth.HeadersForServer(store, resolved.Server)
+			if err != nil {
+				return err
 			}
 
 			ctx, cancel := context.WithTimeout(cmd.Context(), parsed.Timeout)
 			defer cancel()
 
-			client, err := mcpclient.ConnectStdio(ctx, resolved.Server)
+			session, err := mcpclient.Connect(ctx, resolved.Server, resolvedHeaders)
 			if err != nil {
 				return err
 			}
-			defer func() { _ = client.Close() }()
+			defer func() { _ = session.Close() }()
 
-			tools, err := client.ListTools(ctx)
+			tools, err := session.ListTools(ctx)
 			if err != nil {
 				return err
 			}
 			tool, ok := findTool(tools, parsed.ToolName)
 			if !ok {
-				return fmt.Errorf("tool %q not found", parsed.ToolName)
+				return exitcode.WithHint(exitcode.Newf(exitcode.Usage, "tool %q not found", parsed.ToolName), toolsListHint(state, resolved))
 			}
 			spec, err := inspect.InspectTool(tool)
 			if err != nil {
@@ -159,7 +213,7 @@ func newToolCommand(state *State) *cobra.Command {
 			arguments := map[string]any{}
 			if parsed.Input != "" {
 				if len(parsed.DynamicArgs) > 0 {
-					return fmt.Errorf("cannot combine --input with schema-derived tool arguments")
+					return exitcode.New(exitcode.Usage, "cannot combine --input with schema-derived tool arguments")
 				}
 				arguments, err = loadInputArguments(parsed.Input)
 				if err != nil {
@@ -168,11 +222,11 @@ func newToolCommand(state *State) *cobra.Command {
 			} else {
 				arguments, err = invoke.ParseToolArguments(spec, parsed.DynamicArgs)
 				if err != nil {
-					return err
+					return exitcode.WithHint(err, toolsInspectHint(state, resolved, parsed.ToolName))
 				}
 			}
 
-			result, err := client.CallTool(ctx, tool.Name, arguments)
+			result, err := session.CallTool(ctx, tool.Name, arguments)
 			if err != nil {
 				return err
 			}
@@ -183,25 +237,28 @@ func newToolCommand(state *State) *cobra.Command {
 }
 
 type parsedToolInvocation struct {
-	ServerName  string
-	ToolName    string
-	Command     string
-	URL         string
-	CWD         string
-	Env         []string
-	Input       string
-	Output      string
-	Timeout     time.Duration
-	DynamicArgs []string
-	Help        bool
+	ServerName        string
+	ToolName          string
+	Command           string
+	URL               string
+	CWD               string
+	Env               []string
+	Headers           []string
+	Auth              string
+	BearerEnv         string
+	OAuthAuthorizeURL string
+	OAuthTokenURL     string
+	OAuthClientID     string
+	OAuthScopes       []string
+	Input             string
+	Output            string
+	Timeout           time.Duration
+	DynamicArgs       []string
+	Help              bool
 }
 
 func parseToolInvocationTokens(state *State, tokens []string) (*parsedToolInvocation, error) {
-	parsed := &parsedToolInvocation{
-		Input:   "",
-		Output:  "auto",
-		Timeout: mcpclient.DefaultTimeout(),
-	}
+	parsed := &parsedToolInvocation{Output: "auto", Timeout: mcpclient.DefaultTimeout()}
 
 	remaining := make([]string, 0, len(tokens))
 	for i := 0; i < len(tokens); i++ {
@@ -211,7 +268,7 @@ func parseToolInvocationTokens(state *State, tokens []string) (*parsedToolInvoca
 			continue
 		}
 
-		name, value, hasValue, recognized, err := parseKnownToolFlag(tokens, &i)
+		name, value, recognized, err := parseKnownToolFlag(tokens, &i)
 		if err != nil {
 			return nil, err
 		}
@@ -229,6 +286,20 @@ func parseToolInvocationTokens(state *State, tokens []string) (*parsedToolInvoca
 			parsed.CWD = value
 		case "env":
 			parsed.Env = append(parsed.Env, value)
+		case "header":
+			parsed.Headers = append(parsed.Headers, value)
+		case "auth":
+			parsed.Auth = value
+		case "bearer-env":
+			parsed.BearerEnv = value
+		case "oauth-authorize-url":
+			parsed.OAuthAuthorizeURL = value
+		case "oauth-token-url":
+			parsed.OAuthTokenURL = value
+		case "oauth-client-id":
+			parsed.OAuthClientID = value
+		case "oauth-scope":
+			parsed.OAuthScopes = append(parsed.OAuthScopes, value)
 		case "input":
 			parsed.Input = value
 		case "output":
@@ -236,11 +307,7 @@ func parseToolInvocationTokens(state *State, tokens []string) (*parsedToolInvoca
 		case "timeout":
 			parsed.Timeout, err = time.ParseDuration(value)
 			if err != nil {
-				return nil, fmt.Errorf("parse --timeout: %w", err)
-			}
-		default:
-			if hasValue {
-				remaining = append(remaining, token)
+				return nil, exitcode.Wrap(exitcode.Usage, err, "parse --timeout")
 			}
 		}
 	}
@@ -252,14 +319,14 @@ func parseToolInvocationTokens(state *State, tokens []string) (*parsedToolInvoca
 	directMode := state.Options.Invocation.IsExposedCommand() || parsed.Command != "" || parsed.URL != ""
 	if directMode {
 		if len(remaining) < 1 {
-			return nil, fmt.Errorf("usage: tool [server] <tool> [args...]")
+			return nil, exitcode.New(exitcode.Usage, "usage: tool [server] <tool> [args...]")
 		}
 		parsed.ToolName = remaining[0]
 		parsed.DynamicArgs = append([]string(nil), remaining[1:]...)
 		return parsed, nil
 	}
 	if len(remaining) < 2 {
-		return nil, fmt.Errorf("usage: tool [server] <tool> [args...]")
+		return nil, exitcode.New(exitcode.Usage, "usage: tool [server] <tool> [args...]")
 	}
 	parsed.ServerName = remaining[0]
 	parsed.ToolName = remaining[1]
@@ -267,38 +334,42 @@ func parseToolInvocationTokens(state *State, tokens []string) (*parsedToolInvoca
 	return parsed, nil
 }
 
-func parseKnownToolFlag(tokens []string, index *int) (name, value string, hasValue, recognized bool, err error) {
+func parseKnownToolFlag(tokens []string, index *int) (name, value string, recognized bool, err error) {
 	token := tokens[*index]
 	if token == "-o" {
 		if *index+1 >= len(tokens) {
-			return "", "", false, true, fmt.Errorf("missing value for -o")
+			return "", "", true, exitcode.New(exitcode.Usage, "missing value for -o")
 		}
 		*index = *index + 1
-		return "output", tokens[*index], true, true, nil
+		return "output", tokens[*index], true, nil
 	}
 	if !strings.HasPrefix(token, "--") {
-		return "", "", false, false, nil
+		return "", "", false, nil
 	}
 
 	flag := strings.TrimPrefix(token, "--")
 	if before, after, ok := strings.Cut(flag, "="); ok {
-		switch before {
-		case "command", "url", "cwd", "env", "input", "output", "timeout":
-			return before, after, true, true, nil
-		default:
-			return "", "", false, false, nil
+		if isKnownToolFlag(before) {
+			return before, after, true, nil
 		}
+		return "", "", false, nil
 	}
+	if !isKnownToolFlag(flag) {
+		return "", "", false, nil
+	}
+	if *index+1 >= len(tokens) {
+		return "", "", true, exitcode.Newf(exitcode.Usage, "missing value for --%s", flag)
+	}
+	*index = *index + 1
+	return flag, tokens[*index], true, nil
+}
 
+func isKnownToolFlag(flag string) bool {
 	switch flag {
-	case "command", "url", "cwd", "env", "input", "output", "timeout":
-		if *index+1 >= len(tokens) {
-			return "", "", false, true, fmt.Errorf("missing value for --%s", flag)
-		}
-		*index = *index + 1
-		return flag, tokens[*index], true, true, nil
+	case "command", "url", "cwd", "env", "header", "auth", "bearer-env", "oauth-authorize-url", "oauth-token-url", "oauth-client-id", "oauth-scope", "input", "output", "timeout":
+		return true
 	default:
-		return "", "", false, false, nil
+		return false
 	}
 }
 
@@ -310,7 +381,7 @@ func parseToolsArgs(state *State, args []string, command string, url string) (st
 		case 1:
 			return "", args[0], nil
 		default:
-			return "", "", fmt.Errorf("usage: tools [server] [tool]")
+			return "", "", exitcode.New(exitcode.Usage, "usage: tools [server] [tool]")
 		}
 	}
 
@@ -320,7 +391,7 @@ func parseToolsArgs(state *State, args []string, command string, url string) (st
 	case 2:
 		return args[0], args[1], nil
 	default:
-		return "", "", fmt.Errorf("usage: tools [server] [tool]")
+		return "", "", exitcode.New(exitcode.Usage, "usage: tools [server] [tool]")
 	}
 }
 
@@ -347,7 +418,7 @@ func renderTools(w io.Writer, tools []types.Tool, output string) error {
 		}
 		return writer.Flush()
 	default:
-		return fmt.Errorf("unsupported output format %q", output)
+		return exitcode.Newf(exitcode.Usage, "unsupported output format %q", output)
 	}
 }
 
@@ -413,7 +484,7 @@ func renderTool(w io.Writer, tool types.Tool, spec *inspect.ToolSpec, usagePrefi
 		}
 		return nil
 	default:
-		return fmt.Errorf("unsupported output format %q", output)
+		return exitcode.Newf(exitcode.Usage, "unsupported output format %q", output)
 	}
 }
 
@@ -426,7 +497,7 @@ func renderToolResult(w io.Writer, result *types.CallToolResult, output string) 
 	case "raw":
 		text, ok := textOnlyContent(result)
 		if !ok {
-			return fmt.Errorf("-o raw is only supported for text tool results")
+			return exitcode.New(exitcode.Usage, "-o raw is only supported for text tool results")
 		}
 		_, err := io.WriteString(w, text)
 		if err == nil && !strings.HasSuffix(text, "\n") {
@@ -451,7 +522,7 @@ func renderToolResult(w io.Writer, result *types.CallToolResult, output string) 
 		}
 		return writeJSON(w, result)
 	default:
-		return fmt.Errorf("unsupported output format %q", output)
+		return exitcode.Newf(exitcode.Usage, "unsupported output format %q", output)
 	}
 }
 
@@ -462,7 +533,7 @@ func normalizeOutputMode(output string) (string, error) {
 	case "json", "yaml", "raw", "table":
 		return strings.ToLower(strings.TrimSpace(output)), nil
 	default:
-		return "", fmt.Errorf("unsupported output format %q", output)
+		return "", exitcode.Newf(exitcode.Usage, "unsupported output format %q", output)
 	}
 }
 
@@ -508,7 +579,7 @@ func loadInputArguments(input string) (map[string]any, error) {
 		return arguments, nil
 	}
 	if err := json.Unmarshal(data, &arguments); err != nil {
-		return nil, fmt.Errorf("parse --input as JSON object: %w", err)
+		return nil, exitcode.Wrap(exitcode.Usage, err, "parse --input as JSON object")
 	}
 	return arguments, nil
 }
@@ -585,6 +656,45 @@ func renderStructuredTable(w io.Writer, structured map[string]any) bool {
 	}
 	_ = writer.Flush()
 	return true
+}
+
+func toolsListHint(state *State, resolved *serverref.Resolved) string {
+	if state.Options.Invocation.IsExposedCommand() {
+		return fmt.Sprintf("run `%s tools`", state.Options.Invocation.ExposedCommandName)
+	}
+	if resolved == nil || resolved.Server == nil {
+		return ""
+	}
+	switch {
+	case resolved.Server.Source == "ephemeral" && resolved.Server.Command != "":
+		return fmt.Sprintf("run `mcp2cli tools --command %q`", resolved.Server.Command)
+	case resolved.Server.Source == "ephemeral" && resolved.Server.URL != "":
+		return fmt.Sprintf("run `mcp2cli tools --url %q`", resolved.Server.URL)
+	case resolved.Server.Name != "":
+		return fmt.Sprintf("run `mcp2cli tools %s`", resolved.Server.Name)
+	default:
+		return ""
+	}
+}
+
+func toolsInspectHint(state *State, resolved *serverref.Resolved, toolName string) string {
+	toolName = naming.ToKebabCase(toolName)
+	if state.Options.Invocation.IsExposedCommand() {
+		return fmt.Sprintf("run `%s tools %s`", state.Options.Invocation.ExposedCommandName, toolName)
+	}
+	if resolved == nil || resolved.Server == nil {
+		return ""
+	}
+	switch {
+	case resolved.Server.Source == "ephemeral" && resolved.Server.Command != "":
+		return fmt.Sprintf("run `mcp2cli tools --command %q %s`", resolved.Server.Command, toolName)
+	case resolved.Server.Source == "ephemeral" && resolved.Server.URL != "":
+		return fmt.Sprintf("run `mcp2cli tools --url %q %s`", resolved.Server.URL, toolName)
+	case resolved.Server.Name != "":
+		return fmt.Sprintf("run `mcp2cli tools %s %s`", resolved.Server.Name, toolName)
+	default:
+		return ""
+	}
 }
 
 type toolView struct {
