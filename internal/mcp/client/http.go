@@ -1,12 +1,14 @@
 package client
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync/atomic"
 
 	"github.com/maximerivest/mcp2cli/internal/config"
@@ -27,11 +29,13 @@ type Session interface {
 }
 
 // HTTPClient is a minimal JSON-RPC-over-HTTP MCP client.
+// Supports both plain JSON responses and Streamable HTTP (SSE) responses.
 type HTTPClient struct {
-	client  *http.Client
-	url     string
-	headers map[string]string
-	nextID  int64
+	client    *http.Client
+	url       string
+	headers   map[string]string
+	nextID    int64
+	sessionID string // Mcp-Session-Id for Streamable HTTP
 }
 
 // DaemonChecker is an optional function that checks whether a local daemon
@@ -199,6 +203,10 @@ func (c *HTTPClient) do(ctx context.Context, body []byte) ([]byte, error) {
 		return nil, exitcode.Wrap(exitcode.Internal, err, "build HTTP request")
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	if c.sessionID != "" {
+		req.Header.Set("Mcp-Session-Id", c.sessionID)
+	}
 	for key, value := range c.headers {
 		req.Header.Set(key, value)
 	}
@@ -207,17 +215,53 @@ func (c *HTTPClient) do(ctx context.Context, body []byte) ([]byte, error) {
 		return nil, exitcode.Wrap(exitcode.Transport, err, "perform HTTP request")
 	}
 	defer resp.Body.Close()
-	responsePayload, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, exitcode.Wrap(exitcode.Transport, err, "read HTTP response")
-	}
+
 	if resp.StatusCode == http.StatusUnauthorized {
 		return nil, exitcode.New(exitcode.Auth, "authentication required")
 	}
 	if resp.StatusCode/100 != 2 {
 		return nil, exitcode.Newf(exitcode.Transport, "HTTP request failed with status %d", resp.StatusCode)
 	}
+
+	// Track session ID from Streamable HTTP servers
+	if sid := resp.Header.Get("Mcp-Session-Id"); sid != "" {
+		c.sessionID = sid
+	}
+
+	contentType := resp.Header.Get("Content-Type")
+	if strings.HasPrefix(contentType, "text/event-stream") {
+		return c.readSSE(resp.Body)
+	}
+
+	responsePayload, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, exitcode.Wrap(exitcode.Transport, err, "read HTTP response")
+	}
 	return responsePayload, nil
+}
+
+// readSSE parses a Server-Sent Events stream and returns the last JSON-RPC
+// message data. Streamable HTTP servers send responses as SSE events.
+func (c *HTTPClient) readSSE(body io.Reader) ([]byte, error) {
+	scanner := bufio.NewScanner(body)
+	var lastData []byte
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "data: ") {
+			data := []byte(strings.TrimPrefix(line, "data: "))
+			// Check if this is a JSON-RPC response (has "id" or "result" or "error")
+			if len(data) > 0 && data[0] == '{' {
+				lastData = data
+			}
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, exitcode.Wrap(exitcode.Transport, err, "read SSE stream")
+	}
+	if lastData == nil {
+		return nil, exitcode.New(exitcode.Protocol, "no JSON-RPC response in SSE stream")
+	}
+	return lastData, nil
 }
 
 func copyHeaders(headers map[string]string) map[string]string {
