@@ -35,18 +35,74 @@ Still pending:
 - sampling
 - additional remote compatibility layers like SSE / streamable HTTP
 
-## Install / Build
+## Installation
+
+`mcp2cli` ships as a single binary. No Go, Python, or Node.js runtime is required to use it.
+
+### macOS
 
 ```bash
-go build -o bin/mcp2cli ./cmd/mcp2cli
-./bin/mcp2cli version
+# Apple Silicon (M1/M2/M3/M4)
+curl -L -o mcp2cli https://github.com/MaximeRivest/mcp2cli/releases/latest/download/mcp2cli-darwin-arm64
+chmod +x mcp2cli
+sudo mv mcp2cli /usr/local/bin/
+
+# Intel Mac
+curl -L -o mcp2cli https://github.com/MaximeRivest/mcp2cli/releases/latest/download/mcp2cli-darwin-amd64
+chmod +x mcp2cli
+sudo mv mcp2cli /usr/local/bin/
 ```
 
-Or during development:
+### Linux
 
 ```bash
-go test ./...
-go run ./cmd/mcp2cli version
+# x86_64
+curl -L -o mcp2cli https://github.com/MaximeRivest/mcp2cli/releases/latest/download/mcp2cli-linux-amd64
+chmod +x mcp2cli
+sudo mv mcp2cli /usr/local/bin/
+
+# ARM64 (Raspberry Pi, etc.)
+curl -L -o mcp2cli https://github.com/MaximeRivest/mcp2cli/releases/latest/download/mcp2cli-linux-arm64
+chmod +x mcp2cli
+sudo mv mcp2cli /usr/local/bin/
+```
+
+### Windows
+
+1. Download [`mcp2cli-windows-amd64.exe`](https://github.com/MaximeRivest/mcp2cli/releases/latest/download/mcp2cli-windows-amd64.exe)
+2. Rename it to `mcp2cli.exe`
+3. Move it to a folder that is in your `PATH` (for example `C:\Users\YourName\bin\`)
+4. Open a new terminal and run:
+
+```powershell
+mcp2cli version
+```
+
+Or with PowerShell in one step:
+
+```powershell
+Invoke-WebRequest -Uri "https://github.com/MaximeRivest/mcp2cli/releases/latest/download/mcp2cli-windows-amd64.exe" -OutFile "$env:USERPROFILE\bin\mcp2cli.exe"
+```
+
+Make sure `%USERPROFILE%\bin` is in your `PATH`.
+
+### Verify
+
+After installation, confirm it works:
+
+```bash
+mcp2cli version
+```
+
+### Build from source (optional)
+
+If you have Go installed and want to build from source:
+
+```bash
+git clone https://github.com/MaximeRivest/mcp2cli.git
+cd mcp2cli
+go build -o mcp2cli ./cmd/mcp2cli
+./mcp2cli version
 ```
 
 ## Why this exists
