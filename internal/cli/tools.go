@@ -196,6 +196,34 @@ func newToolCommand(state *State) *cobra.Command {
 				return err
 			}
 
+			// Try cached schema first to skip the tools/list round trip
+			var tool types.Tool
+			var toolFound bool
+			var arguments map[string]any
+
+			if cached := cachedToolSchema(state, resolved.Server, parsed.ToolName); cached != nil {
+				tool = *cached
+				toolFound = true
+			}
+
+			if toolFound {
+				spec, err := inspect.InspectTool(tool)
+				if err != nil {
+					return err
+				}
+				if parsed.Input != "" {
+					if len(parsed.DynamicArgs) > 0 {
+						return exitcode.New(exitcode.Usage, "cannot combine --input with schema-derived tool arguments")
+					}
+					arguments, err = loadInputArguments(parsed.Input)
+				} else {
+					arguments, err = invoke.ParseToolArguments(spec, parsed.DynamicArgs)
+				}
+				if err != nil {
+					return exitcode.WithHint(err, toolsInspectHint(state, resolved, parsed.ToolName))
+				}
+			}
+
 			ctx, cancel := context.WithTimeout(cmd.Context(), parsed.Timeout)
 			defer cancel()
 
@@ -205,31 +233,29 @@ func newToolCommand(state *State) *cobra.Command {
 			}
 			defer func() { _ = session.Close() }()
 
-			tools, err := session.ListTools(ctx)
-			if err != nil {
-				return err
-			}
-			cacheMetadata(state, resolved.Server, func(metadata *cache.Metadata) { metadata.Tools = tools })
-			tool, ok := findTool(tools, parsed.ToolName)
-			if !ok {
-				return exitcode.WithHint(exitcode.Newf(exitcode.Usage, "tool %q not found", parsed.ToolName), toolsListHint(state, resolved))
-			}
-			spec, err := inspect.InspectTool(tool)
-			if err != nil {
-				return err
-			}
-
-			arguments := map[string]any{}
-			if parsed.Input != "" {
-				if len(parsed.DynamicArgs) > 0 {
-					return exitcode.New(exitcode.Usage, "cannot combine --input with schema-derived tool arguments")
-				}
-				arguments, err = loadInputArguments(parsed.Input)
+			// If no cache hit, fall back to listing tools from the server
+			if !toolFound {
+				tools, err := session.ListTools(ctx)
 				if err != nil {
 					return err
 				}
-			} else {
-				arguments, err = invoke.ParseToolArguments(spec, parsed.DynamicArgs)
+				cacheMetadata(state, resolved.Server, func(metadata *cache.Metadata) { metadata.Tools = tools })
+				tool, toolFound = findTool(tools, parsed.ToolName)
+				if !toolFound {
+					return exitcode.WithHint(exitcode.Newf(exitcode.Usage, "tool %q not found", parsed.ToolName), toolsListHint(state, resolved))
+				}
+				spec, err := inspect.InspectTool(tool)
+				if err != nil {
+					return err
+				}
+				if parsed.Input != "" {
+					if len(parsed.DynamicArgs) > 0 {
+						return exitcode.New(exitcode.Usage, "cannot combine --input with schema-derived tool arguments")
+					}
+					arguments, err = loadInputArguments(parsed.Input)
+				} else {
+					arguments, err = invoke.ParseToolArguments(spec, parsed.DynamicArgs)
+				}
 				if err != nil {
 					return exitcode.WithHint(err, toolsInspectHint(state, resolved, parsed.ToolName))
 				}
