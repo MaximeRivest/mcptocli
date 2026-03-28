@@ -31,6 +31,14 @@ func TestConnectHTTPListAndCallTool(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": id, "result": map[string]any{"tools": []map[string]any{{"name": "echo", "description": "Echo a message back"}}}})
 		case "tools/call":
 			_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": id, "result": map[string]any{"content": []map[string]any{{"type": "text", "text": "echo: hello"}}}})
+		case "resources/list":
+			_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": id, "result": map[string]any{"resources": []map[string]any{{"uri": "resource://docs/api", "name": "api-docs"}}}})
+		case "resources/read":
+			_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": id, "result": map[string]any{"contents": []map[string]any{{"uri": "resource://docs/api", "text": "API docs"}}}})
+		case "prompts/list":
+			_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": id, "result": map[string]any{"prompts": []map[string]any{{"name": "review-code", "arguments": []map[string]any{{"name": "code", "required": true}}}}}})
+		case "prompts/get":
+			_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": id, "result": map[string]any{"messages": []map[string]any{{"role": "user", "content": map[string]any{"type": "text", "text": "Review this code"}}}}})
 		default:
 			_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": id, "error": map[string]any{"code": -32601, "message": "method not found"}})
 		}
@@ -56,5 +64,33 @@ func TestConnectHTTPListAndCallTool(t *testing.T) {
 	}
 	if len(result.Content) != 1 || result.Content[0].Text != "echo: hello" {
 		t.Fatalf("result = %#v", result)
+	}
+	resources, err := client.ListResources(ctx)
+	if err != nil {
+		t.Fatalf("ListResources: %v", err)
+	}
+	if len(resources) != 1 || resources[0].URI != "resource://docs/api" {
+		t.Fatalf("resources = %#v", resources)
+	}
+	resource, err := client.ReadResource(ctx, "resource://docs/api")
+	if err != nil {
+		t.Fatalf("ReadResource: %v", err)
+	}
+	if len(resource.Contents) != 1 || resource.Contents[0].Text != "API docs" {
+		t.Fatalf("resource = %#v", resource)
+	}
+	prompts, err := client.ListPrompts(ctx)
+	if err != nil {
+		t.Fatalf("ListPrompts: %v", err)
+	}
+	if len(prompts) != 1 || prompts[0].Name != "review-code" {
+		t.Fatalf("prompts = %#v", prompts)
+	}
+	prompt, err := client.GetPrompt(ctx, "review-code", map[string]string{"code": "x"})
+	if err != nil {
+		t.Fatalf("GetPrompt: %v", err)
+	}
+	if len(prompt.Messages) != 1 || prompt.Messages[0].Content.Text != "Review this code" {
+		t.Fatalf("prompt = %#v", prompt)
 	}
 }

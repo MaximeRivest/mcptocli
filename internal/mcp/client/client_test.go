@@ -47,4 +47,32 @@ func TestConnectStdioListAndCallTool(t *testing.T) {
 	if result.StructuredContent["message"] != "hello" {
 		t.Fatalf("unexpected structured content: %#v", result.StructuredContent)
 	}
+	resources, err := client.ListResources(ctx)
+	if err != nil {
+		t.Fatalf("ListResources: %v", err)
+	}
+	if len(resources) != 2 {
+		t.Fatalf("expected 2 resources, got %d", len(resources))
+	}
+	resource, err := client.ReadResource(ctx, "resource://docs/api")
+	if err != nil {
+		t.Fatalf("ReadResource: %v", err)
+	}
+	if len(resource.Contents) != 1 || resource.Contents[0].Text != "API docs for the weather service" {
+		t.Fatalf("unexpected resource result: %#v", resource)
+	}
+	prompts, err := client.ListPrompts(ctx)
+	if err != nil {
+		t.Fatalf("ListPrompts: %v", err)
+	}
+	if len(prompts) != 1 || prompts[0].Name != "review-code" {
+		t.Fatalf("unexpected prompts: %#v", prompts)
+	}
+	prompt, err := client.GetPrompt(ctx, "review-code", map[string]string{"code": "x", "focus": "api"})
+	if err != nil {
+		t.Fatalf("GetPrompt: %v", err)
+	}
+	if len(prompt.Messages) != 1 || prompt.Messages[0].Content.Text == "" {
+		t.Fatalf("unexpected prompt result: %#v", prompt)
+	}
 }

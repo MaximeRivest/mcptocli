@@ -87,6 +87,42 @@ func (c *Client) CallTool(ctx context.Context, name string, arguments map[string
 	return &result, nil
 }
 
+// ListResources returns all resources exposed by the server.
+func (c *Client) ListResources(ctx context.Context) ([]types.Resource, error) {
+	var result types.ListResourcesResult
+	if err := c.rpc.Call(ctx, "resources/list", map[string]any{}, &result); err != nil {
+		return nil, wrapRPCError(exitcode.Protocol, err, "list resources")
+	}
+	return result.Resources, nil
+}
+
+// ReadResource reads one resource by URI.
+func (c *Client) ReadResource(ctx context.Context, uri string) (*types.ReadResourceResult, error) {
+	var result types.ReadResourceResult
+	if err := c.rpc.Call(ctx, "resources/read", types.ReadResourceParams{URI: uri}, &result); err != nil {
+		return nil, wrapRPCError(exitcode.Server, err, fmt.Sprintf("read resource %q", uri))
+	}
+	return &result, nil
+}
+
+// ListPrompts returns all prompts exposed by the server.
+func (c *Client) ListPrompts(ctx context.Context) ([]types.Prompt, error) {
+	var result types.ListPromptsResult
+	if err := c.rpc.Call(ctx, "prompts/list", map[string]any{}, &result); err != nil {
+		return nil, wrapRPCError(exitcode.Protocol, err, "list prompts")
+	}
+	return result.Prompts, nil
+}
+
+// GetPrompt fetches a prompt with arguments.
+func (c *Client) GetPrompt(ctx context.Context, name string, arguments map[string]string) (*types.GetPromptResult, error) {
+	var result types.GetPromptResult
+	if err := c.rpc.Call(ctx, "prompts/get", types.GetPromptParams{Name: name, Arguments: arguments}, &result); err != nil {
+		return nil, wrapRPCError(exitcode.Server, err, fmt.Sprintf("get prompt %q", name))
+	}
+	return &result, nil
+}
+
 // Close closes the underlying transport.
 func (c *Client) Close() error {
 	if c == nil || c.transport == nil {

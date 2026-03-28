@@ -45,89 +45,137 @@ func main() {
 			respond(req.ID, map[string]any{
 				"protocolVersion": "2024-11-05",
 				"capabilities":    map[string]any{},
-				"serverInfo": map[string]any{
-					"name":    "stdiofixture",
-					"version": "0.1.0",
-				},
+				"serverInfo":      map[string]any{"name": "stdiofixture", "version": "0.1.0"},
 			})
 		case "notifications/initialized":
 			// no-op
 		case "tools/list":
-			respond(req.ID, map[string]any{
-				"tools": []map[string]any{
-					{
-						"name":        "echo",
-						"description": "Echo a message back",
-						"inputSchema": map[string]any{
-							"type": "object",
-							"properties": map[string]any{
-								"message": map[string]any{
-									"type":        "string",
-									"description": "Message to echo",
-								},
-							},
-							"required": []string{"message"},
-						},
-					},
-					{
-						"name":        "get-forecast",
-						"description": "Get weather forecast for a location",
-						"inputSchema": map[string]any{
-							"type": "object",
-							"properties": map[string]any{
-								"latitude": map[string]any{
-									"type":        "number",
-									"description": "Latitude of the location",
-								},
-								"longitude": map[string]any{
-									"type":        "number",
-									"description": "Longitude of the location",
-								},
-							},
-							"required": []string{"latitude", "longitude"},
-						},
-					},
-				},
-			})
+			respond(req.ID, map[string]any{"tools": toolList()})
 		case "tools/call":
-			var params struct {
-				Name      string         `json:"name"`
-				Arguments map[string]any `json:"arguments"`
-			}
-			if err := json.Unmarshal(req.Params, &params); err != nil {
-				respondError(req.ID, -32602, fmt.Sprintf("invalid params: %v", err))
-				continue
-			}
-			switch params.Name {
-			case "echo":
-				message, _ := params.Arguments["message"].(string)
-				respond(req.ID, map[string]any{
-					"content": []map[string]any{{
-						"type": "text",
-						"text": "echo: " + message,
-					}},
-					"structuredContent": map[string]any{
-						"message": message,
-					},
-				})
-			case "get-forecast":
-				respond(req.ID, map[string]any{
-					"content": []map[string]any{{
-						"type": "text",
-						"text": "Sunny with light winds",
-					}},
-					"structuredContent": map[string]any{
-						"forecast":  "Sunny with light winds",
-						"latitude":  params.Arguments["latitude"],
-						"longitude": params.Arguments["longitude"],
-					},
-				})
-			default:
-				respondError(req.ID, -32601, "unknown tool")
-			}
+			handleToolCall(req)
+		case "resources/list":
+			respond(req.ID, map[string]any{"resources": resourceList()})
+		case "resources/read":
+			handleResourceRead(req)
+		case "prompts/list":
+			respond(req.ID, map[string]any{"prompts": promptList()})
+		case "prompts/get":
+			handlePromptGet(req)
 		default:
 			respondError(req.ID, -32601, "method not found")
 		}
+	}
+}
+
+func toolList() []map[string]any {
+	return []map[string]any{
+		{
+			"name":        "echo",
+			"description": "Echo a message back",
+			"inputSchema": map[string]any{
+				"type":       "object",
+				"properties": map[string]any{"message": map[string]any{"type": "string", "description": "Message to echo"}},
+				"required":   []string{"message"},
+			},
+		},
+		{
+			"name":        "get-forecast",
+			"description": "Get weather forecast for a location",
+			"inputSchema": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"latitude":  map[string]any{"type": "number", "description": "Latitude of the location"},
+					"longitude": map[string]any{"type": "number", "description": "Longitude of the location"},
+				},
+				"required": []string{"latitude", "longitude"},
+			},
+		},
+	}
+}
+
+func resourceList() []map[string]any {
+	return []map[string]any{
+		{"uri": "resource://docs/api", "name": "api-docs", "description": "API documentation", "mimeType": "text/plain"},
+		{"uri": "resource://status/current", "name": "current-status", "description": "Current server status", "mimeType": "application/json"},
+	}
+}
+
+func promptList() []map[string]any {
+	return []map[string]any{
+		{
+			"name":        "review-code",
+			"description": "Generate a code review prompt",
+			"arguments": []map[string]any{
+				{"name": "code", "description": "Code to review", "required": true},
+				{"name": "focus", "description": "Review focus area"},
+			},
+		},
+	}
+}
+
+func handleToolCall(req request) {
+	var params struct {
+		Name      string         `json:"name"`
+		Arguments map[string]any `json:"arguments"`
+	}
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		respondError(req.ID, -32602, fmt.Sprintf("invalid params: %v", err))
+		return
+	}
+	switch params.Name {
+	case "echo":
+		message, _ := params.Arguments["message"].(string)
+		respond(req.ID, map[string]any{
+			"content":           []map[string]any{{"type": "text", "text": "echo: " + message}},
+			"structuredContent": map[string]any{"message": message},
+		})
+	case "get-forecast":
+		respond(req.ID, map[string]any{
+			"content":           []map[string]any{{"type": "text", "text": "Sunny with light winds"}},
+			"structuredContent": map[string]any{"forecast": "Sunny with light winds", "latitude": params.Arguments["latitude"], "longitude": params.Arguments["longitude"]},
+		})
+	default:
+		respondError(req.ID, -32601, "unknown tool")
+	}
+}
+
+func handleResourceRead(req request) {
+	var params struct {
+		URI string `json:"uri"`
+	}
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		respondError(req.ID, -32602, fmt.Sprintf("invalid params: %v", err))
+		return
+	}
+	switch params.URI {
+	case "resource://docs/api":
+		respond(req.ID, map[string]any{"contents": []map[string]any{{"uri": params.URI, "mimeType": "text/plain", "text": "API docs for the weather service"}}})
+	case "resource://status/current":
+		respond(req.ID, map[string]any{"contents": []map[string]any{{"uri": params.URI, "mimeType": "application/json", "text": `{"status":"ok","region":"test"}`}}})
+	default:
+		respondError(req.ID, -32602, "unknown resource")
+	}
+}
+
+func handlePromptGet(req request) {
+	var params struct {
+		Name      string            `json:"name"`
+		Arguments map[string]string `json:"arguments"`
+	}
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		respondError(req.ID, -32602, fmt.Sprintf("invalid params: %v", err))
+		return
+	}
+	switch params.Name {
+	case "review-code":
+		focus := params.Arguments["focus"]
+		if focus == "" {
+			focus = "general quality"
+		}
+		text := fmt.Sprintf("Review this code with a focus on %s:\n\n%s", focus, params.Arguments["code"])
+		respond(req.ID, map[string]any{"description": "Generate a code review prompt", "messages": []map[string]any{{"role": "user", "content": map[string]any{"type": "text", "text": text}}}})
+	default:
+		respondError(req.ID, -32601, "unknown prompt")
 	}
 }
 
@@ -162,23 +210,12 @@ func readMessage(reader *bufio.Reader) ([]byte, error) {
 }
 
 func respond(id json.RawMessage, result any) {
-	response := map[string]any{
-		"jsonrpc": "2.0",
-		"id":      rawID(id),
-		"result":  result,
-	}
+	response := map[string]any{"jsonrpc": "2.0", "id": rawID(id), "result": result}
 	writeMessage(response)
 }
 
 func respondError(id json.RawMessage, code int, message string) {
-	response := map[string]any{
-		"jsonrpc": "2.0",
-		"id":      rawID(id),
-		"error": responseError{
-			Code:    code,
-			Message: message,
-		},
-	}
+	response := map[string]any{"jsonrpc": "2.0", "id": rawID(id), "error": responseError{Code: code, Message: message}}
 	writeMessage(response)
 }
 

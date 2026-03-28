@@ -31,9 +31,25 @@ type Store struct {
 // NewStore creates a token store using repository paths.
 func NewStore(paths config.Paths) *Store {
 	store := &Store{fileDir: paths.TokenDir}
-	kr, err := keyring.Open(keyring.Config{ServiceName: "mcp2cli", FileDir: paths.TokenDir})
-	if err == nil {
-		store.keyring = kr
+	if os.Getenv("MCP2CLI_USE_SYSTEM_KEYRING") != "1" {
+		return store
+	}
+	type result struct {
+		keyring keyring.Keyring
+		err     error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		kr, err := keyring.Open(keyring.Config{ServiceName: "mcp2cli", FileDir: paths.TokenDir})
+		ch <- result{keyring: kr, err: err}
+	}()
+	select {
+	case opened := <-ch:
+		if opened.err == nil {
+			store.keyring = opened.keyring
+		}
+	case <-time.After(200 * time.Millisecond):
+		// Fall back to file storage if the system keyring is slow or unavailable.
 	}
 	return store
 }

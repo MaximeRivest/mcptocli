@@ -19,6 +19,10 @@ import (
 type Session interface {
 	ListTools(ctx context.Context) ([]types.Tool, error)
 	CallTool(ctx context.Context, name string, arguments map[string]any) (*types.CallToolResult, error)
+	ListResources(ctx context.Context) ([]types.Resource, error)
+	ReadResource(ctx context.Context, uri string) (*types.ReadResourceResult, error)
+	ListPrompts(ctx context.Context) ([]types.Prompt, error)
+	GetPrompt(ctx context.Context, name string, arguments map[string]string) (*types.GetPromptResult, error)
 	Close() error
 }
 
@@ -84,6 +88,42 @@ func (c *HTTPClient) CallTool(ctx context.Context, name string, arguments map[st
 	var result types.CallToolResult
 	if err := c.call(ctx, "tools/call", types.CallToolParams{Name: name, Arguments: arguments}, &result); err != nil {
 		return nil, wrapRPCError(exitcode.Server, err, fmt.Sprintf("call tool %q", name))
+	}
+	return &result, nil
+}
+
+// ListResources returns all resources exposed by the server.
+func (c *HTTPClient) ListResources(ctx context.Context) ([]types.Resource, error) {
+	var result types.ListResourcesResult
+	if err := c.call(ctx, "resources/list", map[string]any{}, &result); err != nil {
+		return nil, wrapRPCError(exitcode.Protocol, err, "list resources")
+	}
+	return result.Resources, nil
+}
+
+// ReadResource reads one resource by URI.
+func (c *HTTPClient) ReadResource(ctx context.Context, uri string) (*types.ReadResourceResult, error) {
+	var result types.ReadResourceResult
+	if err := c.call(ctx, "resources/read", types.ReadResourceParams{URI: uri}, &result); err != nil {
+		return nil, wrapRPCError(exitcode.Server, err, fmt.Sprintf("read resource %q", uri))
+	}
+	return &result, nil
+}
+
+// ListPrompts returns all prompts exposed by the server.
+func (c *HTTPClient) ListPrompts(ctx context.Context) ([]types.Prompt, error) {
+	var result types.ListPromptsResult
+	if err := c.call(ctx, "prompts/list", map[string]any{}, &result); err != nil {
+		return nil, wrapRPCError(exitcode.Protocol, err, "list prompts")
+	}
+	return result.Prompts, nil
+}
+
+// GetPrompt fetches a prompt with arguments.
+func (c *HTTPClient) GetPrompt(ctx context.Context, name string, arguments map[string]string) (*types.GetPromptResult, error) {
+	var result types.GetPromptResult
+	if err := c.call(ctx, "prompts/get", types.GetPromptParams{Name: name, Arguments: arguments}, &result); err != nil {
+		return nil, wrapRPCError(exitcode.Server, err, fmt.Sprintf("get prompt %q", name))
 	}
 	return &result, nil
 }

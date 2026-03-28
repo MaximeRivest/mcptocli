@@ -26,10 +26,11 @@ var commandNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 
 // Paths contains the filesystem paths used by mcp2cli.
 type Paths struct {
-	GlobalConfig string
-	LocalConfig  string
-	ExposeBinDir string
-	TokenDir     string
+	GlobalConfig     string
+	LocalConfig      string
+	ExposeBinDir     string
+	TokenDir         string
+	MetadataCacheDir string
 }
 
 // File is the on-disk configuration format.
@@ -83,10 +84,11 @@ func DefaultPaths(cwd string) (Paths, error) {
 	}
 
 	return Paths{
-		GlobalConfig: filepath.Join(xdg.ConfigHome, "mcp2cli", "config.yaml"),
-		LocalConfig:  filepath.Join(cwd, ".mcp2cli.yaml"),
-		ExposeBinDir: filepath.Join(xdg.DataHome, "mcp2cli", "bin"),
-		TokenDir:     filepath.Join(xdg.DataHome, "mcp2cli", "tokens"),
+		GlobalConfig:     filepath.Join(xdg.ConfigHome, "mcp2cli", "config.yaml"),
+		LocalConfig:      filepath.Join(cwd, ".mcp2cli.yaml"),
+		ExposeBinDir:     filepath.Join(xdg.DataHome, "mcp2cli", "bin"),
+		TokenDir:         filepath.Join(xdg.DataHome, "mcp2cli", "tokens"),
+		MetadataCacheDir: filepath.Join(xdg.CacheHome, "mcp2cli", "metadata"),
 	}, nil
 }
 

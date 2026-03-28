@@ -6,6 +6,7 @@ import (
 
 	"github.com/maximerivest/mcp2cli/internal/app"
 	"github.com/maximerivest/mcp2cli/internal/auth"
+	"github.com/maximerivest/mcp2cli/internal/cache"
 	"github.com/maximerivest/mcp2cli/internal/config"
 	"github.com/maximerivest/mcp2cli/internal/exitcode"
 )
@@ -42,6 +43,14 @@ func (s *State) TokenStore() (*auth.Store, error) {
 		return nil, err
 	}
 	return auth.NewStore(repo.Paths), nil
+}
+
+func (s *State) MetadataStore() (*cache.Store, error) {
+	repo, err := s.Repo()
+	if err != nil {
+		return nil, err
+	}
+	return cache.NewStore(repo.Paths), nil
 }
 
 func (s *State) BoundServer() (*config.Server, error) {

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/maximerivest/mcp2cli/internal/auth"
+	"github.com/maximerivest/mcp2cli/internal/cache"
 	"github.com/maximerivest/mcp2cli/internal/exitcode"
 	"github.com/maximerivest/mcp2cli/internal/invoke"
 	mcpclient "github.com/maximerivest/mcp2cli/internal/mcp/client"
@@ -101,6 +102,7 @@ func newToolsCommand(state *State) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			cacheMetadata(state, resolved.Server, func(metadata *cache.Metadata) { metadata.Tools = tools })
 			sort.Slice(tools, func(i, j int) bool { return naming.ToKebabCase(tools[i].Name) < naming.ToKebabCase(tools[j].Name) })
 
 			if toolName != "" {
@@ -201,6 +203,7 @@ func newToolCommand(state *State) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			cacheMetadata(state, resolved.Server, func(metadata *cache.Metadata) { metadata.Tools = tools })
 			tool, ok := findTool(tools, parsed.ToolName)
 			if !ok {
 				return exitcode.WithHint(exitcode.Newf(exitcode.Usage, "tool %q not found", parsed.ToolName), toolsListHint(state, resolved))
