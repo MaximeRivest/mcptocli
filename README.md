@@ -68,255 +68,237 @@ sudo mv mcp2cli /usr/local/bin/
 Or paste this into **PowerShell**:
 
 ```powershell
-# Create a bin folder if you don't have one
 New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\bin" | Out-Null
-
-# Download
 Invoke-WebRequest -Uri "https://github.com/MaximeRivest/mcp2cli/releases/latest/download/mcp2cli-windows-amd64.exe" -OutFile "$env:USERPROFILE\bin\mcp2cli.exe"
-
-# Add to PATH for this session (to make it permanent, add it via System Settings → Environment Variables)
 $env:PATH += ";$env:USERPROFILE\bin"
 ```
 
 ### Check that it worked
 
-Open a **new** terminal window and run:
-
 ```bash
 mcp2cli version
 ```
 
-You should see a version number. If you do, you're ready.
-
 ---
 
-## Quick start: your first MCP server
+## Quick start
 
-Let's try a real example. The [filesystem MCP server](https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem) lets you list and read files through MCP. You'll need [Node.js](https://nodejs.org/) installed for this example (the server runs on Node, but `mcp2cli` itself doesn't need it).
+Two steps: **add** a server once, then **use** it by name.
 
-### Step 1: See what the server can do
+### Step 1: Add a server
 
 ```bash
-mcp2cli tools --command 'npx -y @modelcontextprotocol/server-filesystem /tmp'
+mcp2cli add weather 'npx -y @h1deya/mcp-server-weather'
 ```
 
-This starts the server, connects to it, and lists all available tools. You'll see something like:
+That's it. The second argument is the command to start the server. URLs are detected automatically:
+
+```bash
+mcp2cli add notion https://mcp.notion.com/mcp --auth oauth
+```
+
+### Step 2: Use it
+
+```bash
+mcp2cli weather tools
+```
 
 ```text
-list-directory    List files and directories
-read-file         Read the contents of a file
-write-file        Create or overwrite a file
-...
+get-alerts      Get active weather alerts for a US state
+get-forecast    Get forecast for a latitude/longitude pair
 ```
-
-### Step 2: Call a tool
 
 ```bash
-mcp2cli tool --command 'npx -y @modelcontextprotocol/server-filesystem /tmp' list-directory /tmp
+mcp2cli weather get-forecast --latitude 37.7 --longitude -122.4
 ```
 
-That calls the `list-directory` tool with `/tmp` as the path argument. You'll see the directory listing right in your terminal.
-
-### Step 3: Register the server so you don't have to retype the command
-
-```bash
-mcp2cli add files --command 'npx -y @modelcontextprotocol/server-filesystem /tmp'
-```
-
-Now you can just write:
-
-```bash
-mcp2cli tools files
-mcp2cli tool files list-directory /tmp
-mcp2cli tool files read-file /tmp/hello.txt
-```
-
-### Step 4: Give it its own name
-
-```bash
-mcp2cli expose files
-```
-
-Now `mcp-files` is a real command on your system:
-
-```bash
-mcp-files tools
-mcp-files list-directory /tmp
-mcp-files read-file /tmp/hello.txt
-```
-
-Want an even shorter name?
-
-```bash
-mcp2cli expose files --as fs
-fs list-directory /tmp
-```
+The server name **is** the command. No `tool` vs `tools` to remember — just the server name followed by what you want to do.
 
 ---
 
-## Using a remote MCP server
+## Daily use
 
-Some MCP servers run on the web instead of your machine. You connect to them with a URL.
-
-### With a bearer token (API key)
+Once a server is added, here's everything you need:
 
 ```bash
-# Set your API key as an environment variable
-export ACME_TOKEN="your-api-key-here"
-
-# Use the server
-mcp2cli tools --url https://api.acme.dev/mcp --bearer-env ACME_TOKEN
-mcp2cli tool --url https://api.acme.dev/mcp --bearer-env ACME_TOKEN search --query invoices
+mcp2cli weather tools                                          # list tools
+mcp2cli weather get-forecast --latitude 37.7 --longitude -122.4  # call a tool
+mcp2cli weather get-forecast 37.7 -122.4                       # positional args work too
+mcp2cli weather resources                                      # list resources
+mcp2cli weather resource api-docs                              # read a resource
+mcp2cli weather prompts                                        # list prompts
+mcp2cli weather prompt review-code --code @main.go             # render a prompt
+mcp2cli weather shell                                          # interactive mode
+mcp2cli weather doctor                                         # diagnose problems
 ```
 
-Or register it once:
+### Inspect a tool before calling it
 
 ```bash
-mcp2cli add acme --url https://api.acme.dev/mcp --bearer-env ACME_TOKEN
-mcp2cli tools acme
-mcp2cli tool acme search --query invoices
+mcp2cli weather tools get-forecast
 ```
-
-### With OAuth (browser login)
-
-```bash
-mcp2cli add notion --url https://mcp.notion.com/mcp --auth oauth
-mcp2cli login notion
-# Your browser opens, you log in, come back to the terminal
-
-mcp2cli tool notion notion-get-self
-```
-
----
-
-## Inspecting tools before calling them
-
-You can look at any tool's arguments before calling it:
-
-```bash
-mcp2cli tools weather get-forecast
-```
-
-Output:
 
 ```text
 NAME
   get-forecast - Get weather forecast for a location
 
 USAGE
-  mcp2cli tool weather get-forecast --latitude <float> --longitude <float>
+  mcp2cli weather get-forecast --latitude <float> --longitude <float>
 
 ARGS
   --latitude float   Required. Latitude of the location.
   --longitude float  Required. Longitude of the location.
 ```
 
----
-
-## Resources and prompts
-
-MCP servers can also expose **resources** (data you can read) and **prompts** (text templates you can render).
+### Interactive shell
 
 ```bash
-# List resources
-mcp2cli resources weather
-
-# Read one
-mcp2cli resource weather api-docs
-
-# List prompts
-mcp2cli prompts weather
-
-# Render a prompt with arguments
-mcp2cli prompt weather review-code --code 'x <- 1' --focus api
-```
-
----
-
-## Interactive shell mode
-
-If you want to explore a server interactively without retyping the server name every time:
-
-```bash
-mcp2cli shell weather
+mcp2cli weather shell
 ```
 
 ```text
 weather> tools
-weather> get-forecast --latitude 37.7 --longitude -122.4
+weather> get-forecast 37.7 -122.4
 weather> resources
 weather> resource api-docs
 weather> set output json
-weather> get-forecast --latitude 37.7 --longitude -122.4
+weather> get-forecast 37.7 -122.4
 weather> exit
 ```
 
-The shell keeps the connection open, supports history, tab completion, and lets you switch output formats on the fly.
+The shell keeps the connection open, supports history and tab completion, and lets you switch output formats on the fly.
+
+---
+
+## Remote servers
+
+### With a bearer token
+
+```bash
+export ACME_TOKEN="your-api-key"
+mcp2cli add acme https://api.acme.dev/mcp --bearer-env ACME_TOKEN
+mcp2cli acme tools
+mcp2cli acme search --query invoices
+```
+
+### With OAuth (browser login)
+
+```bash
+mcp2cli add notion https://mcp.notion.com/mcp --auth oauth
+mcp2cli notion tools
+# Browser opens automatically the first time
+```
 
 ---
 
 ## Output formats
 
-By default, `mcp2cli` prints human-friendly output. When you need machine-readable data for scripting:
-
 ```bash
-# Human-readable (default)
-mcp2cli tool weather get-forecast 37.7 -122.4
-
-# Exact JSON for scripts
-mcp2cli tool weather get-forecast 37.7 -122.4 -o json
-
-# YAML
-mcp2cli tool weather get-forecast 37.7 -122.4 -o yaml
-
-# Plain text only
-mcp2cli resource weather api-docs -o raw
+mcp2cli weather get-forecast 37.7 -122.4           # human-readable (default)
+mcp2cli weather get-forecast 37.7 -122.4 -o json    # exact JSON for scripts
+mcp2cli weather get-forecast 37.7 -122.4 -o yaml    # YAML
+mcp2cli weather resource api-docs -o raw             # plain text
 ```
 
-The `-o json` flag is always script-safe: output goes to `stdout`, diagnostics go to `stderr`, and exit codes are stable.
+`-o json` is always script-safe: output goes to `stdout`, diagnostics go to `stderr`, exit codes are stable.
 
 ---
 
-## Arguments: flags and positionals
+## Arguments
 
 `mcp2cli` reads the tool's schema and generates CLI flags automatically.
 
 ```bash
 # Named flags (always work)
-mcp2cli tool weather get-forecast --latitude 37.7 --longitude -122.4
+mcp2cli weather get-forecast --latitude 37.7 --longitude -122.4
 
 # Positional arguments (for required scalar args, in schema order)
-mcp2cli tool weather get-forecast 37.7 -122.4
+mcp2cli weather get-forecast 37.7 -122.4
 
 # Booleans
-mcp2cli tool api update --dry-run
-mcp2cli tool api update --no-dry-run
+mcp2cli api update --dry-run
+mcp2cli api update --no-dry-run
 
 # Repeated values for arrays
-mcp2cli tool api search --tag cli --tag go --tag mcp
+mcp2cli api search --tag cli --tag go --tag mcp
 
 # Structured JSON from a file
-mcp2cli tool api create --payload @data.json
+mcp2cli api create --payload @data.json
 
 # Or from stdin
-cat data.json | mcp2cli tool api create --payload @-
+cat data.json | mcp2cli api create --payload @-
 ```
 
-For tools with very complex schemas, you can always fall back to raw JSON:
+For complex schemas, you can always fall back to raw JSON:
 
 ```bash
-mcp2cli tool api complex-tool --input '{"nested": {"key": "value"}}'
-mcp2cli tool api complex-tool --input @payload.json
+mcp2cli api complex-tool --input '{"nested": {"key": "value"}}'
 ```
+
+---
+
+## One-off use (no registration)
+
+You don't have to register a server to use it:
+
+```bash
+mcp2cli tools --command 'npx -y @h1deya/mcp-server-weather'
+mcp2cli tool --command 'npx -y @h1deya/mcp-server-weather' get-forecast 37.7 -122.4
+mcp2cli tool --url https://api.example.com/mcp --bearer-env TOKEN search --query test
+```
+
+---
+
+## Exposed commands
+
+When you add a server, `mcp2cli` automatically creates a standalone command for it:
+
+```bash
+mcp2cli add weather 'npx -y @h1deya/mcp-server-weather'
+# → creates mcp-weather
+
+mcp-weather tools
+mcp-weather get-forecast 37.7 -122.4
+```
+
+Want a shorter name?
+
+```bash
+mcp2cli expose weather --as wea
+wea tools
+wea get-forecast 37.7 -122.4
+```
+
+These are real commands on your `PATH`, so `mcp-<TAB>` works in your shell.
+
+---
+
+## Managing servers
+
+```bash
+mcp2cli add weather 'npx -y @h1deya/mcp-server-weather'    # register
+mcp2cli ls                                                   # list all
+mcp2cli rm weather                                           # remove (cleans up exposed commands too)
+```
+
+`ls` output:
+
+```text
+weather  npx -y @h1deya/mcp-server-weather
+notion   https://mcp.notion.com/mcp
+```
+
+Config is saved automatically:
+
+- Global: `~/.config/mcp2cli/config.yaml`
+- Per-project: `.mcp2cli.yaml` (use `--local` flag)
 
 ---
 
 ## Diagnosing problems
 
-If something isn't working:
-
 ```bash
-mcp2cli doctor weather
+mcp2cli weather doctor
 ```
 
 ```text
@@ -330,40 +312,7 @@ tools    ok      2 tool(s) available
 
 ---
 
-## Config
-
-Servers you register are saved automatically.
-
-- Global config: `~/.config/mcp2cli/config.yaml`
-- Per-project config: `.mcp2cli.yaml` in the current directory
-
-```yaml
-version: 1
-
-servers:
-  weather:
-    command: npx -y @h1deya/mcp-server-weather
-    expose:
-      - mcp-weather
-
-  notion:
-    url: https://mcp.notion.com/mcp
-    auth: oauth
-```
-
-You manage servers with:
-
-```bash
-mcp2cli add weather --command '...'
-mcp2cli ls
-mcp2cli rm weather
-```
-
----
-
 ## Shell completions
-
-Enable tab completion for your shell:
 
 ```bash
 # bash
@@ -375,35 +324,6 @@ echo 'source <(mcp2cli completion zsh)' >> ~/.zshrc
 # fish
 mcp2cli completion fish | source
 ```
-
-Exposed commands like `mcp-weather` and `wea` also support completions:
-
-```bash
-echo 'source <(mcp-weather completion bash)' >> ~/.bashrc
-```
-
----
-
-## Complete command reference
-
-| Command | What it does |
-| --- | --- |
-| `mcp2cli add <name>` | Register a server |
-| `mcp2cli ls` | List registered servers |
-| `mcp2cli rm <name>` | Remove a registered server |
-| `mcp2cli expose <name>` | Create a standalone command for a server |
-| `mcp2cli unexpose <name>` | Remove an exposed command |
-| `mcp2cli login <name>` | Authenticate ahead of time |
-| `mcp2cli tools <server> [tool]` | List tools or inspect one |
-| `mcp2cli tool <server> <tool> [args...]` | Call a tool |
-| `mcp2cli resources <server> [resource]` | List or inspect resources |
-| `mcp2cli resource <server> <resource>` | Read a resource |
-| `mcp2cli prompts <server> [prompt]` | List or inspect prompts |
-| `mcp2cli prompt <server> <prompt> [args...]` | Render a prompt |
-| `mcp2cli shell <server>` | Open interactive shell |
-| `mcp2cli doctor <server>` | Diagnose connection issues |
-| `mcp2cli completion <shell>` | Generate shell completions |
-| `mcp2cli version` | Print version |
 
 ---
 
@@ -420,8 +340,6 @@ They complement each other. If a service has an MCP server:
 ---
 
 ## Build from source
-
-If you have [Go](https://go.dev/dl/) installed:
 
 ```bash
 git clone https://github.com/MaximeRivest/mcp2cli.git
@@ -442,7 +360,8 @@ This is an alpha release. What works today:
 - ✅ OAuth login with browser flow and token persistence
 - ✅ tools, resources, and prompts
 - ✅ schema-driven CLI flags and positional arguments
-- ✅ exposed server commands (`mcp-weather`, `wea`, etc.)
+- ✅ server name as implicit subcommand (`mcp2cli weather tools`)
+- ✅ exposed standalone commands (`mcp-weather`, `wea`)
 - ✅ interactive shell mode with history and completion
 - ✅ terminal elicitation (server-initiated user prompts)
 - ✅ metadata cache for fast completions
