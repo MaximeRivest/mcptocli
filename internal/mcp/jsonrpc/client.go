@@ -33,27 +33,32 @@ type envelope struct {
 	Error   *RPCError       `json:"error,omitempty"`
 }
 
+// RequestHandler handles server-initiated JSON-RPC requests.
+type RequestHandler func(ctx context.Context, method string, params json.RawMessage) (result any, rpcErr *RPCError, handled bool)
+
 // Client is a minimal transport-agnostic JSON-RPC 2.0 client.
 type Client struct {
-	reader  *bufio.Reader
-	writer  io.Writer
-	closer  io.Closer
-	nextID  int64
-	writeMu sync.Mutex
-	mu      sync.Mutex
-	pending map[int64]chan envelope
-	done    chan struct{}
-	readErr error
+	reader         *bufio.Reader
+	writer         io.Writer
+	closer         io.Closer
+	requestHandler RequestHandler
+	nextID         int64
+	writeMu        sync.Mutex
+	mu             sync.Mutex
+	pending        map[int64]chan envelope
+	done           chan struct{}
+	readErr        error
 }
 
 // NewClient constructs a JSON-RPC client and starts its read loop.
-func NewClient(reader io.Reader, writer io.Writer, closer io.Closer) *Client {
+func NewClient(reader io.Reader, writer io.Writer, closer io.Closer, requestHandler RequestHandler) *Client {
 	client := &Client{
-		reader:  bufio.NewReader(reader),
-		writer:  writer,
-		closer:  closer,
-		pending: map[int64]chan envelope{},
-		done:    make(chan struct{}),
+		reader:         bufio.NewReader(reader),
+		writer:         writer,
+		closer:         closer,
+		requestHandler: requestHandler,
+		pending:        map[int64]chan envelope{},
+		done:           make(chan struct{}),
 	}
 	go client.readLoop()
 	return client
@@ -163,6 +168,10 @@ func (c *Client) readLoop() {
 			c.failPending(fmt.Errorf("decode json-rpc message: %w", err))
 			return
 		}
+		if response.Method != "" && len(response.ID) > 0 {
+			go c.handleIncomingRequest(response)
+			continue
+		}
 		if len(response.ID) == 0 {
 			continue
 		}
@@ -197,4 +206,54 @@ func (c *Client) removePending(id int64) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	delete(c.pending, id)
+}
+
+func (c *Client) handleIncomingRequest(request envelope) {
+	result := any(map[string]any{})
+	var rpcErr *RPCError
+	if c.requestHandler != nil {
+		handledResult, handledErr, handled := c.requestHandler(context.Background(), request.Method, request.Params)
+		if handled {
+			result = handledResult
+			rpcErr = handledErr
+		} else {
+			rpcErr = &RPCError{Code: -32601, Message: "method not found"}
+		}
+		if result == nil {
+			result = map[string]any{}
+		}
+		if handledErr != nil {
+			result = nil
+		}
+		c.respond(request.ID, result, rpcErr)
+		return
+	}
+	c.respond(request.ID, nil, &RPCError{Code: -32601, Message: "method not found"})
+}
+
+func (c *Client) respond(id json.RawMessage, result any, rpcErr *RPCError) {
+	response := map[string]any{"jsonrpc": "2.0", "id": rawID(id)}
+	if rpcErr != nil {
+		response["error"] = rpcErr
+	} else {
+		response["result"] = result
+	}
+	payload, err := json.Marshal(response)
+	if err != nil {
+		return
+	}
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+	_ = writeMessage(c.writer, payload)
+}
+
+func rawID(id json.RawMessage) any {
+	if len(id) == 0 {
+		return nil
+	}
+	var decoded any
+	if err := json.Unmarshal(id, &decoded); err != nil {
+		return nil
+	}
+	return decoded
 }

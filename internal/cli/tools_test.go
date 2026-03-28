@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"fmt"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -70,6 +71,70 @@ func TestToolCommandWithInput(t *testing.T) {
 	}
 	if got := strings.TrimSpace(stdout.String()); got != "echo: hello" {
 		t.Fatalf("tool output = %q, want %q", got, "echo: hello")
+	}
+}
+
+func TestToolCommandWithElicitation(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(t.TempDir(), "config"))
+	t.Setenv("XDG_DATA_HOME", filepath.Join(t.TempDir(), "data"))
+
+	repo, err := config.NewRepository("")
+	if err != nil {
+		t.Fatalf("NewRepository: %v", err)
+	}
+	if err := repo.UpsertServer(config.SourceGlobal, "weather", &config.Server{Command: fixtureCommand(t)}); err != nil {
+		t.Fatalf("UpsertServer: %v", err)
+	}
+
+	root, err := NewRootCommand(Options{Version: "dev", Invocation: app.Invocation{ProgramName: "mcp2cli"}})
+	if err != nil {
+		t.Fatalf("NewRootCommand: %v", err)
+	}
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	root.SetIn(strings.NewReader("y\n"))
+	root.SetOut(stdout)
+	root.SetErr(stderr)
+	root.SetArgs([]string{"tool", "weather", "confirm-action", "--action", "deploy"})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute elicitation: %v\nstderr: %s", err, stderr.String())
+	}
+	if got := strings.TrimSpace(stdout.String()); got != "Action 'deploy' confirmed and executed!" {
+		t.Fatalf("elicitation output = %q", got)
+	}
+}
+
+func TestToolCommandWithElicitationRequiresInteractiveInput(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(t.TempDir(), "config"))
+	t.Setenv("XDG_DATA_HOME", filepath.Join(t.TempDir(), "data"))
+
+	repo, err := config.NewRepository("")
+	if err != nil {
+		t.Fatalf("NewRepository: %v", err)
+	}
+	if err := repo.UpsertServer(config.SourceGlobal, "weather", &config.Server{Command: fixtureCommand(t)}); err != nil {
+		t.Fatalf("UpsertServer: %v", err)
+	}
+
+	root, err := NewRootCommand(Options{Version: "dev", Invocation: app.Invocation{ProgramName: "mcp2cli"}})
+	if err != nil {
+		t.Fatalf("NewRootCommand: %v", err)
+	}
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	file, err := os.CreateTemp(t.TempDir(), "noninteractive")
+	if err != nil {
+		t.Fatalf("CreateTemp: %v", err)
+	}
+	defer file.Close()
+	root.SetIn(file)
+	root.SetOut(stdout)
+	root.SetErr(stderr)
+	root.SetArgs([]string{"tool", "weather", "confirm-action", "--action", "deploy"})
+
+	if err := root.Execute(); err == nil {
+		t.Fatal("expected elicitation error")
 	}
 }
 

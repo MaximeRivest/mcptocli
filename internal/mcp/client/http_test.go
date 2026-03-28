@@ -47,7 +47,7 @@ func TestConnectHTTPListAndCallTool(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	client, err := ConnectHTTP(ctx, &config.Server{URL: server.URL}, nil)
+	client, err := ConnectHTTP(ctx, &config.Server{URL: server.URL}, nil, ConnectOptions{})
 	if err != nil {
 		t.Fatalf("ConnectHTTP: %v", err)
 	}

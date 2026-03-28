@@ -35,21 +35,22 @@ type HTTPClient struct {
 }
 
 // Connect selects stdio or HTTP transport based on the resolved server.
-func Connect(ctx context.Context, server *config.Server, headers map[string]string) (Session, error) {
+func Connect(ctx context.Context, server *config.Server, headers map[string]string, options ConnectOptions) (Session, error) {
 	if server != nil && server.URL != "" {
-		return ConnectHTTP(ctx, server, headers)
+		return ConnectHTTP(ctx, server, headers, options)
 	}
-	return ConnectStdio(ctx, server)
+	return ConnectStdio(ctx, server, options)
 }
 
 // ConnectHTTP connects to a remote MCP endpoint over HTTP and initializes it.
-func ConnectHTTP(ctx context.Context, server *config.Server, headers map[string]string) (*HTTPClient, error) {
+func ConnectHTTP(ctx context.Context, server *config.Server, headers map[string]string, options ConnectOptions) (*HTTPClient, error) {
 	if server == nil {
 		return nil, exitcode.New(exitcode.Internal, "server cannot be nil")
 	}
 	if server.URL == "" {
 		return nil, exitcode.New(exitcode.Config, "http server url cannot be empty")
 	}
+	_ = options
 	client := &HTTPClient{client: &http.Client{}, url: server.URL, headers: copyHeaders(headers)}
 	if err := client.Initialize(ctx); err != nil {
 		return nil, err

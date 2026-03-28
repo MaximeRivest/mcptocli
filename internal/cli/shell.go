@@ -70,7 +70,7 @@ func newShellCommand(state *State) *cobra.Command {
 
 			ctx, cancel := context.WithTimeout(cmd.Context(), timeout)
 			defer cancel()
-			resolved, session, err := openSession(state, metadataConnectionOptions{ExplicitName: explicitServer, Command: command, URL: urlValue, CWD: cwd, Env: envVars, Headers: headers, Auth: authMode, BearerEnv: bearerEnv}, ctx)
+			resolved, session, err := openSession(state, metadataConnectionOptions{ExplicitName: explicitServer, Command: command, URL: urlValue, CWD: cwd, Env: envVars, Headers: headers, Auth: authMode, BearerEnv: bearerEnv}, ctx, os.Stdin, cmd.ErrOrStderr())
 			if err != nil {
 				return err
 			}

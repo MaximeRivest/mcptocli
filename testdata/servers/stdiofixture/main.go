@@ -52,7 +52,7 @@ func main() {
 		case "tools/list":
 			respond(req.ID, map[string]any{"tools": toolList()})
 		case "tools/call":
-			handleToolCall(req)
+			handleToolCall(reader, req)
 		case "resources/list":
 			respond(req.ID, map[string]any{"resources": resourceList()})
 		case "resources/read":
@@ -66,6 +66,8 @@ func main() {
 		}
 	}
 }
+
+var outgoingRequestID = 1000
 
 func toolList() []map[string]any {
 	return []map[string]any{
@@ -88,6 +90,17 @@ func toolList() []map[string]any {
 					"longitude": map[string]any{"type": "number", "description": "Longitude of the location"},
 				},
 				"required": []string{"latitude", "longitude"},
+			},
+		},
+		{
+			"name":        "confirm-action",
+			"description": "Ask the client for confirmation before proceeding",
+			"inputSchema": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"action": map[string]any{"type": "string", "description": "Action to confirm"},
+				},
+				"required": []string{"action"},
 			},
 		},
 	}
@@ -113,7 +126,7 @@ func promptList() []map[string]any {
 	}
 }
 
-func handleToolCall(req request) {
+func handleToolCall(reader *bufio.Reader, req request) {
 	var params struct {
 		Name      string         `json:"name"`
 		Arguments map[string]any `json:"arguments"`
@@ -133,6 +146,22 @@ func handleToolCall(req request) {
 		respond(req.ID, map[string]any{
 			"content":           []map[string]any{{"type": "text", "text": "Sunny with light winds"}},
 			"structuredContent": map[string]any{"forecast": "Sunny with light winds", "latitude": params.Arguments["latitude"], "longitude": params.Arguments["longitude"]},
+		})
+	case "confirm-action":
+		action, _ := params.Arguments["action"].(string)
+		result, err := sendElicitation(reader, fmt.Sprintf("Do you want to %s?", action))
+		if err != nil {
+			respondError(req.ID, -32000, err.Error())
+			return
+		}
+		accepted, _ := result.Content["confirm"].(bool)
+		message := fmt.Sprintf("Action '%s' cancelled.", action)
+		if result.Action == "accept" && accepted {
+			message = fmt.Sprintf("Action '%s' confirmed and executed!", action)
+		}
+		respond(req.ID, map[string]any{
+			"content":           []map[string]any{{"type": "text", "text": message}},
+			"structuredContent": map[string]any{"confirmed": result.Action == "accept" && accepted},
 		})
 	default:
 		respondError(req.ID, -32601, "unknown tool")
@@ -212,6 +241,47 @@ func readMessage(reader *bufio.Reader) ([]byte, error) {
 func respond(id json.RawMessage, result any) {
 	response := map[string]any{"jsonrpc": "2.0", "id": rawID(id), "result": result}
 	writeMessage(response)
+}
+
+type elicitResult struct {
+	Action  string         `json:"action"`
+	Content map[string]any `json:"content,omitempty"`
+}
+
+func sendElicitation(reader *bufio.Reader, message string) (*elicitResult, error) {
+	outgoingRequestID++
+	requestID := outgoingRequestID
+	writeMessage(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      requestID,
+		"method":  "elicitation/create",
+		"params": map[string]any{
+			"message": message,
+			"requestedSchema": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"confirm": map[string]any{"type": "boolean", "description": "confirm"},
+				},
+				"required": []string{"confirm"},
+			},
+		},
+	})
+
+	payload, err := readMessage(reader)
+	if err != nil {
+		return nil, err
+	}
+	var response struct {
+		Result elicitResult  `json:"result"`
+		Error  responseError `json:"error"`
+	}
+	if err := json.Unmarshal(payload, &response); err != nil {
+		return nil, err
+	}
+	if response.Error.Message != "" {
+		return nil, fmt.Errorf(response.Error.Message)
+	}
+	return &response.Result, nil
 }
 
 func respondError(id json.RawMessage, code int, message string) {

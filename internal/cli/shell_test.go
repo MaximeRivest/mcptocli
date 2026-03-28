@@ -32,13 +32,13 @@ func TestDispatchShellLine(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	resolved, session, err := openSession(state, metadataConnectionOptions{ExplicitName: "weather"}, ctx)
+	stdout := &bytes.Buffer{}
+	resolved, session, err := openSession(state, metadataConnectionOptions{ExplicitName: "weather"}, ctx, strings.NewReader(""), stdout)
 	if err != nil {
 		t.Fatalf("openSession: %v", err)
 	}
 	defer func() { _ = session.Close() }()
 
-	stdout := &bytes.Buffer{}
 	env, err := newShellEnv(state, resolved, session, "auto", stdout, ctx)
 	if err != nil {
 		t.Fatalf("newShellEnv: %v", err)

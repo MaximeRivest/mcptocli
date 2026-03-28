@@ -1,6 +1,6 @@
 # mcp2cli: Turn any MCP server into a CLI
 
-> Status: design draft. `mcp2cli` is planned in Go. This README defines the intended UX.
+> Status: implemented alpha. `mcp2cli` is written in Go and already supports local stdio servers, remote HTTP JSON-RPC servers, bearer auth, OAuth login, tools, resources, prompts, shell mode, exposed commands, and cache-backed completions. Sampling is still pending.
 
 If `mcp2py` turns an MCP server into a Python module, `mcp2cli` should turn an MCP server into a delightful command-line tool.
 
@@ -14,6 +14,40 @@ MCP servers expose **tools**, **resources**, and **prompts**. `mcp2cli` should m
 - 🤖 **Sampling** → optional LLM-backed responses when a server requests them
 
 The goal is simple: if a server speaks MCP, you should be able to use it from bash, zsh, fish, CI, Makefiles, and shell pipelines without writing a custom client.
+
+## Current status
+
+Implemented today:
+
+- local stdio MCP servers
+- remote HTTP JSON-RPC MCP servers
+- bearer env auth and custom headers
+- OAuth login with token persistence
+- tools, resources, and prompts
+- schema-driven tool and prompt arguments
+- exposed commands like `mcp-weather` and `wea`
+- interactive shell mode
+- metadata-backed completions
+- terminal elicitation
+
+Still pending:
+
+- sampling
+- additional remote compatibility layers like SSE / streamable HTTP
+
+## Install / Build
+
+```bash
+go build -o bin/mcp2cli ./cmd/mcp2cli
+./bin/mcp2cli version
+```
+
+Or during development:
+
+```bash
+go test ./...
+go run ./cmd/mcp2cli version
+```
 
 ## Why this exists
 
@@ -94,6 +128,15 @@ mcp2cli login notion
 mcp2cli tool notion notion-get-self
 ```
 
+### 6.5 Use resources and prompts
+
+```bash
+mcp2cli resources weather
+mcp2cli resource weather api-docs
+mcp2cli prompts weather
+mcp2cli prompt weather review-code --code 'x <- 1' --focus api
+```
+
 ### 7. Explore interactively
 
 ```bash
@@ -163,7 +206,7 @@ Every command operates on a **server reference**. A server reference can be:
 This means the same UX should work whether the server is:
 
 - a local Node/Python/Rust process over stdio
-- a remote MCP server over HTTP/SSE/streamable HTTP
+- a remote MCP server over HTTP JSON-RPC today, with SSE/streamable HTTP compatibility to come
 - a registered alias in config
 - an exposed command on your `PATH`
 
@@ -586,9 +629,17 @@ Nice-to-have behavior:
 - `mcp2cli unexpose weather --as wea` removes that alias
 - `mcp2cli ls` shows where each server is defined and which exposed command names point to it
 
+For auth storage, `mcp2cli` uses reliable file-backed token storage by default. System keyring support is available by setting:
+
+```bash
+export MCP2CLI_USE_SYSTEM_KEYRING=1
+```
+
 ## Shell integration
 
 Tab completion is a big part of the delight.
+
+Current completion behavior is backed by the metadata cache, so registered and exposed servers feel fast once they have been inspected at least once.
 
 ```bash
 mcp2cli completion bash
@@ -630,16 +681,20 @@ wea get-forecast --<TAB>
 
 Some MCP servers ask the client to do more than plain tool calls.
 
-`mcp2cli` should handle that gracefully:
+`mcp2cli` currently handles:
 
 - **elicitation** → ask the user in the terminal
+
+Still pending:
+
 - **sampling** → optionally call a configured LLM and return the answer to the server
 
-Suggested defaults:
+Current elicitation behavior:
 
-- automatically detect LLM credentials from common env vars
-- provide a way to disable sampling for safety
-- make all interactive behavior obvious in the terminal
+- interactive terminals are prompted directly
+- non-interactive stdin fails clearly with an interactive-input error
+- prompts are printed to `stderr`, keeping `stdout` clean for command output
+- current support is focused on local stdio sessions and other transports that can carry server-initiated requests in-band; the simple HTTP JSON-RPC path does not yet provide full elicitation support
 
 ## Why Go
 

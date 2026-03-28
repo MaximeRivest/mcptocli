@@ -1,4 +1,4 @@
-.PHONY: fmt test build tidy
+.PHONY: fmt test build tidy smoke
 
 fmt:
 	gofmt -w ./cmd ./internal
@@ -11,3 +11,6 @@ build:
 
 tidy:
 	go mod tidy
+
+smoke:
+	bash scripts/smoke.sh

@@ -2,8 +2,10 @@ package client
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/maximerivest/mcp2cli/internal/config"
@@ -17,13 +19,24 @@ const protocolVersion = "2024-11-05"
 
 // Client is a minimal MCP client for stdio transports.
 type Client struct {
-	rpc       *mcpjsonrpc.Client
-	transport *stdio.Transport
-	server    *config.Server
+	rpc                *mcpjsonrpc.Client
+	transport          *stdio.Transport
+	server             *config.Server
+	elicitationHandler ElicitationHandler
+	callbackErrMu      sync.Mutex
+	callbackErr        error
+}
+
+// ElicitationHandler handles server requests for user input.
+type ElicitationHandler func(ctx context.Context, params types.ElicitRequestParams) (*types.ElicitResult, error)
+
+// ConnectOptions configures optional client behaviors.
+type ConnectOptions struct {
+	ElicitationHandler ElicitationHandler
 }
 
 // ConnectStdio starts a stdio MCP session and performs the initialize handshake.
-func ConnectStdio(ctx context.Context, server *config.Server) (*Client, error) {
+func ConnectStdio(ctx context.Context, server *config.Server, options ConnectOptions) (*Client, error) {
 	if server == nil {
 		return nil, exitcode.New(exitcode.Internal, "server cannot be nil")
 	}
@@ -37,10 +50,11 @@ func ConnectStdio(ctx context.Context, server *config.Server) (*Client, error) {
 	}
 
 	client := &Client{
-		rpc:       mcpjsonrpc.NewClient(transport.Reader(), transport.Writer(), transport),
-		transport: transport,
-		server:    server,
+		transport:          transport,
+		server:             server,
+		elicitationHandler: options.ElicitationHandler,
 	}
+	client.rpc = mcpjsonrpc.NewClient(transport.Reader(), transport.Writer(), transport, client.handleRequest)
 	if err := client.Initialize(ctx); err != nil {
 		_ = client.Close()
 		return nil, err
@@ -50,9 +64,13 @@ func ConnectStdio(ctx context.Context, server *config.Server) (*Client, error) {
 
 // Initialize performs the MCP initialize handshake.
 func (c *Client) Initialize(ctx context.Context) error {
+	capabilities := map[string]any{}
+	if c.elicitationHandler != nil {
+		capabilities["elicitation"] = map[string]any{}
+	}
 	request := types.InitializeParams{
 		ProtocolVersion: protocolVersion,
-		Capabilities:    map[string]any{},
+		Capabilities:    capabilities,
 		ClientInfo: types.Implementation{
 			Name:    "mcp2cli",
 			Version: "dev",
@@ -82,6 +100,9 @@ func (c *Client) CallTool(ctx context.Context, name string, arguments map[string
 	request := types.CallToolParams{Name: name, Arguments: arguments}
 	var result types.CallToolResult
 	if err := c.rpc.Call(ctx, "tools/call", request, &result); err != nil {
+		if callbackErr := c.consumeCallbackErr(); callbackErr != nil {
+			return nil, callbackErr
+		}
 		return nil, wrapRPCError(exitcode.Server, err, fmt.Sprintf("call tool %q", name))
 	}
 	return &result, nil
@@ -100,6 +121,9 @@ func (c *Client) ListResources(ctx context.Context) ([]types.Resource, error) {
 func (c *Client) ReadResource(ctx context.Context, uri string) (*types.ReadResourceResult, error) {
 	var result types.ReadResourceResult
 	if err := c.rpc.Call(ctx, "resources/read", types.ReadResourceParams{URI: uri}, &result); err != nil {
+		if callbackErr := c.consumeCallbackErr(); callbackErr != nil {
+			return nil, callbackErr
+		}
 		return nil, wrapRPCError(exitcode.Server, err, fmt.Sprintf("read resource %q", uri))
 	}
 	return &result, nil
@@ -118,6 +142,9 @@ func (c *Client) ListPrompts(ctx context.Context) ([]types.Prompt, error) {
 func (c *Client) GetPrompt(ctx context.Context, name string, arguments map[string]string) (*types.GetPromptResult, error) {
 	var result types.GetPromptResult
 	if err := c.rpc.Call(ctx, "prompts/get", types.GetPromptParams{Name: name, Arguments: arguments}, &result); err != nil {
+		if callbackErr := c.consumeCallbackErr(); callbackErr != nil {
+			return nil, callbackErr
+		}
 		return nil, wrapRPCError(exitcode.Server, err, fmt.Sprintf("get prompt %q", name))
 	}
 	return &result, nil
@@ -134,6 +161,44 @@ func (c *Client) Close() error {
 // DefaultTimeout returns the default timeout for one-shot MCP operations.
 func DefaultTimeout() time.Duration {
 	return 30 * time.Second
+}
+
+func (c *Client) handleRequest(ctx context.Context, method string, params json.RawMessage) (any, *mcpjsonrpc.RPCError, bool) {
+	switch method {
+	case "elicitation/create":
+		if c.elicitationHandler == nil {
+			return nil, &mcpjsonrpc.RPCError{Code: -32601, Message: "elicitation not supported"}, true
+		}
+		var request types.ElicitRequestParams
+		if err := json.Unmarshal(params, &request); err != nil {
+			return nil, &mcpjsonrpc.RPCError{Code: -32602, Message: err.Error()}, true
+		}
+		result, err := c.elicitationHandler(ctx, request)
+		if err != nil {
+			c.setCallbackErr(err)
+			return nil, &mcpjsonrpc.RPCError{Code: -32000, Message: err.Error()}, true
+		}
+		return result, nil, true
+	default:
+		return nil, nil, false
+	}
+}
+
+func (c *Client) setCallbackErr(err error) {
+	if err == nil {
+		return
+	}
+	c.callbackErrMu.Lock()
+	defer c.callbackErrMu.Unlock()
+	c.callbackErr = err
+}
+
+func (c *Client) consumeCallbackErr() error {
+	c.callbackErrMu.Lock()
+	defer c.callbackErrMu.Unlock()
+	err := c.callbackErr
+	c.callbackErr = nil
+	return err
 }
 
 func wrapRPCError(category exitcode.Category, err error, message string) error {

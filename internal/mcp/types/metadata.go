@@ -69,3 +69,15 @@ type GetPromptResult struct {
 	Description string          `json:"description,omitempty"`
 	Messages    []PromptMessage `json:"messages,omitempty"`
 }
+
+// ElicitRequestParams is sent by the server when it needs user input.
+type ElicitRequestParams struct {
+	Message         string         `json:"message"`
+	RequestedSchema map[string]any `json:"requestedSchema"`
+}
+
+// ElicitResult is returned by the client in response to elicitation/create.
+type ElicitResult struct {
+	Action  string         `json:"action"`
+	Content map[string]any `json:"content,omitempty"`
+}

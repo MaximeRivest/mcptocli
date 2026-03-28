@@ -95,7 +95,7 @@ func newToolsCommand(state *State) *cobra.Command {
 			ctx, cancel := context.WithTimeout(cmd.Context(), timeout)
 			defer cancel()
 
-			session, err := mcpclient.Connect(ctx, resolved.Server, resolvedHeaders)
+			session, err := mcpclient.Connect(ctx, resolved.Server, resolvedHeaders, terminalConnectOptions(cmd.InOrStdin(), cmd.ErrOrStderr()))
 			if err != nil {
 				return err
 			}
@@ -199,7 +199,7 @@ func newToolCommand(state *State) *cobra.Command {
 			ctx, cancel := context.WithTimeout(cmd.Context(), parsed.Timeout)
 			defer cancel()
 
-			session, err := mcpclient.Connect(ctx, resolved.Server, resolvedHeaders)
+			session, err := mcpclient.Connect(ctx, resolved.Server, resolvedHeaders, terminalConnectOptions(cmd.InOrStdin(), cmd.ErrOrStderr()))
 			if err != nil {
 				return err
 			}

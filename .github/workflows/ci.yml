@@ -22,3 +22,6 @@ jobs:
 
       - name: Test
         run: go test ./...
+
+      - name: Build
+        run: go build ./cmd/mcp2cli

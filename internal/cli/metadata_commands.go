@@ -50,7 +50,7 @@ func newResourcesCommand(state *State) *cobra.Command {
 			}
 			ctx, cancel := context.WithTimeout(cmd.Context(), timeout)
 			defer cancel()
-			resolved, session, err := openSession(state, metadataConnectionOptions{ExplicitName: explicitServer, Command: command, URL: urlValue, CWD: cwd, Env: envVars, Headers: headers, Auth: authMode, BearerEnv: bearerEnv}, ctx)
+			resolved, session, err := openSession(state, metadataConnectionOptions{ExplicitName: explicitServer, Command: command, URL: urlValue, CWD: cwd, Env: envVars, Headers: headers, Auth: authMode, BearerEnv: bearerEnv}, ctx, cmd.InOrStdin(), cmd.ErrOrStderr())
 			if err != nil {
 				return err
 			}
@@ -104,7 +104,7 @@ func newResourceCommand(state *State) *cobra.Command {
 			}
 			ctx, cancel := context.WithTimeout(cmd.Context(), timeout)
 			defer cancel()
-			resolved, session, err := openSession(state, metadataConnectionOptions{ExplicitName: explicitServer, Command: command, URL: urlValue, CWD: cwd, Env: envVars, Headers: headers, Auth: authMode, BearerEnv: bearerEnv}, ctx)
+			resolved, session, err := openSession(state, metadataConnectionOptions{ExplicitName: explicitServer, Command: command, URL: urlValue, CWD: cwd, Env: envVars, Headers: headers, Auth: authMode, BearerEnv: bearerEnv}, ctx, cmd.InOrStdin(), cmd.ErrOrStderr())
 			if err != nil {
 				return err
 			}
@@ -158,7 +158,7 @@ func newPromptsCommand(state *State) *cobra.Command {
 			}
 			ctx, cancel := context.WithTimeout(cmd.Context(), timeout)
 			defer cancel()
-			resolved, session, err := openSession(state, metadataConnectionOptions{ExplicitName: explicitServer, Command: command, URL: urlValue, CWD: cwd, Env: envVars, Headers: headers, Auth: authMode, BearerEnv: bearerEnv}, ctx)
+			resolved, session, err := openSession(state, metadataConnectionOptions{ExplicitName: explicitServer, Command: command, URL: urlValue, CWD: cwd, Env: envVars, Headers: headers, Auth: authMode, BearerEnv: bearerEnv}, ctx, cmd.InOrStdin(), cmd.ErrOrStderr())
 			if err != nil {
 				return err
 			}
@@ -205,7 +205,7 @@ func newPromptCommand(state *State) *cobra.Command {
 			}
 			ctx, cancel := context.WithTimeout(cmd.Context(), parsed.Timeout)
 			defer cancel()
-			resolved, session, err := openSession(state, metadataConnectionOptions{ExplicitName: parsed.ServerName, Command: parsed.Command, URL: parsed.URL, CWD: parsed.CWD, Env: parsed.Env, Headers: parsed.Headers, Auth: parsed.Auth, BearerEnv: parsed.BearerEnv}, ctx)
+			resolved, session, err := openSession(state, metadataConnectionOptions{ExplicitName: parsed.ServerName, Command: parsed.Command, URL: parsed.URL, CWD: parsed.CWD, Env: parsed.Env, Headers: parsed.Headers, Auth: parsed.Auth, BearerEnv: parsed.BearerEnv}, ctx, cmd.InOrStdin(), cmd.ErrOrStderr())
 			if err != nil {
 				return err
 			}
@@ -260,7 +260,7 @@ type metadataConnectionOptions struct {
 	BearerEnv    string
 }
 
-func openSession(state *State, options metadataConnectionOptions, ctx context.Context) (*serverref.Resolved, mcpclient.Session, error) {
+func openSession(state *State, options metadataConnectionOptions, ctx context.Context, in io.Reader, errOut io.Writer) (*serverref.Resolved, mcpclient.Session, error) {
 	repo, err := state.Repo()
 	if err != nil {
 		return nil, nil, err
@@ -281,7 +281,7 @@ func openSession(state *State, options metadataConnectionOptions, ctx context.Co
 	if err != nil {
 		return nil, nil, err
 	}
-	session, err := mcpclient.Connect(ctx, resolved.Server, headers)
+	session, err := mcpclient.Connect(ctx, resolved.Server, headers, terminalConnectOptions(in, errOut))
 	if err != nil {
 		return nil, nil, err
 	}

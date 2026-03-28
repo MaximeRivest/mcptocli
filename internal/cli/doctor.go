@@ -135,7 +135,7 @@ func newDoctorCommand(state *State) *cobra.Command {
 
 			ctx, cancel := context.WithTimeout(cmd.Context(), timeout)
 			defer cancel()
-			session, err := mcpclient.Connect(ctx, resolved.Server, resolvedHeaders)
+			session, err := mcpclient.Connect(ctx, resolved.Server, resolvedHeaders, terminalConnectOptions(cmd.InOrStdin(), cmd.ErrOrStderr()))
 			if err != nil {
 				checks = append(checks, doctorCheck{Name: "connect", Status: "fail", Detail: err.Error()})
 				return renderAndReturn(err)

@@ -23,7 +23,7 @@ func TestConnectStdioListAndCallTool(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	client, err := ConnectStdio(ctx, &config.Server{Command: command})
+	client, err := ConnectStdio(ctx, &config.Server{Command: command}, ConnectOptions{})
 	if err != nil {
 		t.Fatalf("ConnectStdio: %v", err)
 	}
