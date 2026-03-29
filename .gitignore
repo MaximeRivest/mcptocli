@@ -12,6 +12,11 @@ coverage.out
 .coverprofile
 vendor/
 
+# Docs
+docs/node_modules/
+docs/dist/
+docs/.astro/
+
 # Editors / OS
 .DS_Store
 .vscode/
