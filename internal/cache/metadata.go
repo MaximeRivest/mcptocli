@@ -84,6 +84,15 @@ func (s *Store) LoadFresh(server *config.Server, ttl time.Duration) (*Metadata, 
 	return metadata, nil
 }
 
+// Delete removes cached metadata for a server.
+func (s *Store) Delete(server *config.Server) error {
+	if s == nil || s.dir == "" || server == nil {
+		return nil
+	}
+	path := filepath.Join(s.dir, cacheKey(server)+".json")
+	return os.Remove(path)
+}
+
 func cacheKey(server *config.Server) string {
 	if server == nil {
 		return "unknown"

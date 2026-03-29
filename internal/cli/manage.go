@@ -1,16 +1,21 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/adrg/xdg"
+	authpkg "github.com/maximerivest/mcptocli/internal/auth"
+	"github.com/maximerivest/mcptocli/internal/cache"
 	"github.com/maximerivest/mcptocli/internal/config"
 	"github.com/maximerivest/mcptocli/internal/daemon"
 	"github.com/maximerivest/mcptocli/internal/expose"
+	mcpclient "github.com/maximerivest/mcptocli/internal/mcp/client"
 	"github.com/spf13/cobra"
 )
 
@@ -110,6 +115,9 @@ URLs (starting with http:// or https://) are detected automatically.`,
 
 			fmt.Fprintf(cmd.OutOrStdout(), "added server %q\n", name)
 
+			// Clear any stale metadata cache for this server
+			clearMetadataCache(state, server)
+
 			// Auto-expose unless opted out
 			if !noExpose {
 				exposedName := as
@@ -136,6 +144,27 @@ URLs (starting with http:// or https://) are detected automatically.`,
 			if progName == "" {
 				progName = "mcptocli"
 			}
+
+			// Auto-login for OAuth servers
+			if strings.EqualFold(strings.TrimSpace(auth), "oauth") && strings.TrimSpace(url) != "" {
+				store, err := state.TokenStore()
+				if err == nil {
+					server.Name = name // needed for token key
+					ctx, cancel := context.WithTimeout(cmd.Context(), 2*time.Minute)
+					defer cancel()
+					fmt.Fprintf(cmd.OutOrStdout(), "\nlogging in...\n")
+					token, loginErr := authpkg.LoginOAuth(ctx, store, server)
+					if loginErr != nil {
+						fmt.Fprintf(cmd.ErrOrStderr(), "login failed: %v\n", loginErr)
+						fmt.Fprintf(cmd.ErrOrStderr(), "run \"%s %s login\" to try again\n", progName, name)
+					} else {
+						fmt.Fprintf(cmd.OutOrStdout(), "login successful (token type: %s)\n", token.TokenType)
+						// Fetch and cache tools now that we're authenticated
+						refreshMetadataCache(cmd, state, server)
+					}
+				}
+			}
+
 			fmt.Fprintf(cmd.OutOrStdout(), "\nnow use it:\n  %s %s tools\n  %s %s shell\n", progName, name, progName, name)
 			return nil
 		},
@@ -206,6 +235,7 @@ func newRemoveCommand(state *State) *cobra.Command {
 					return err
 				}
 			}
+			clearMetadataCache(state, server)
 			if err := repo.RemoveServer(server.Source, server.Name); err != nil {
 				return err
 			}
@@ -295,4 +325,47 @@ For example, exposing "time" creates "mcp-time" so you can run:
 	cmd.Flags().StringVar(&as, "as", "", "Custom command name (default: mcp-<server>)")
 	cmd.Flags().BoolVar(&remove, "remove", false, "Remove the exposed command instead of creating it")
 	return cmd
+}
+
+// clearMetadataCache removes cached metadata for a server.
+func clearMetadataCache(state *State, server *config.Server) {
+	store, err := state.MetadataStore()
+	if err != nil || store == nil {
+		return
+	}
+	_ = store.Delete(server)
+}
+
+// refreshMetadataCache connects to the server and caches its tools.
+func refreshMetadataCache(cmd *cobra.Command, state *State, server *config.Server) {
+	ctx, cancel := context.WithTimeout(cmd.Context(), 15*time.Second)
+	defer cancel()
+
+	store, err := state.TokenStore()
+	if err != nil {
+		return
+	}
+	headers, err := authpkg.HeadersForServer(store, server)
+	if err != nil {
+		return
+	}
+
+	session, err := mcpclient.Connect(ctx, server, headers, mcpclient.ConnectOptions{})
+	if err != nil {
+		return
+	}
+	defer session.Close()
+
+	tools, err := session.ListTools(ctx)
+	if err != nil {
+		return
+	}
+	resources, _ := session.ListResources(ctx)
+	prompts, _ := session.ListPrompts(ctx)
+
+	cacheMetadata(state, server, func(m *cache.Metadata) {
+		m.Tools = tools
+		m.Resources = resources
+		m.Prompts = prompts
+	})
 }

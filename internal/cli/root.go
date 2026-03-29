@@ -107,6 +107,7 @@ Quick start:
 		upCmd.GroupID = groupDaemon
 		downCmd.GroupID = groupDaemon
 		toolsCmd.GroupID = groupDaemon
+		loginCmd.GroupID = groupDaemon
 		doctorCmd.GroupID = groupDaemon
 
 		// Plumbing commands — still available but hidden from help
@@ -115,7 +116,6 @@ Quick start:
 		resourceCmd.Hidden = true
 		promptsCmd.Hidden = true
 		promptCmd.Hidden = true
-		loginCmd.Hidden = true
 	} else {
 		toolsCmd.GroupID = groupUse
 		toolCmd.GroupID = groupUse

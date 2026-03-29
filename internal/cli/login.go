@@ -92,6 +92,8 @@ Useful for pre-authenticating before using tools, or refreshing tokens.`,
 				}
 				fmt.Fprintf(cmd.OutOrStdout(), "login successful for %q\n", resolved.DisplayName)
 				fmt.Fprintf(cmd.OutOrStdout(), "token type: %s\n", token.TokenType)
+				// Refresh metadata cache now that we're authenticated
+				refreshMetadataCache(cmd, state, resolved.Server)
 				return nil
 			case "bearer":
 				if resolved.Server.BearerEnv == "" {
