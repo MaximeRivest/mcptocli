@@ -559,7 +559,7 @@ func renderTool(w io.Writer, tool types.Tool, spec *inspect.ToolSpec, usagePrefi
 	case "table", "auto":
 		fmt.Fprintf(w, "NAME\n  %s", view.Name)
 		if view.Description != "" {
-			fmt.Fprintf(w, " - %s", view.Description)
+			fmt.Fprintf(w, " - %s", cleanDescription(view.Description))
 		}
 		fmt.Fprintln(w)
 		if len(spec.Arguments) > 0 {
@@ -571,7 +571,7 @@ func renderTool(w io.Writer, tool types.Tool, spec *inspect.ToolSpec, usagePrefi
 			fmt.Fprintln(w, "\nARGS")
 			writer := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 			for _, arg := range view.Args {
-				details := arg.Description
+				details := cleanArgDescription(arg.Description)
 				if arg.Required {
 					details = "Required. " + details
 				}
@@ -836,6 +836,83 @@ type toolArgView struct {
 	Required    bool   `json:"required,omitempty" yaml:"required,omitempty"`
 	HasDefault  bool   `json:"hasDefault,omitempty" yaml:"hasDefault,omitempty"`
 	Default     any    `json:"default,omitempty" yaml:"default,omitempty"`
+}
+
+// cleanDescription extracts a short, terminal-friendly summary from a tool description.
+// Strips XML/HTML tags, markdown headings, and keeps only the first paragraph.
+func cleanDescription(s string) string {
+	// Strip XML/HTML tags
+	s = stripTags(s)
+	// Take first paragraph (up to double newline)
+	if idx := strings.Index(s, "\n\n"); idx > 0 {
+		s = s[:idx]
+	}
+	// Clean up markdown headings
+	lines := strings.Split(s, "\n")
+	var clean []string
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		// Skip markdown headings
+		if strings.HasPrefix(line, "#") {
+			continue
+		}
+		clean = append(clean, line)
+	}
+	result := strings.Join(clean, " ")
+	// Truncate if still too long
+	if len(result) > 200 {
+		// Cut at sentence boundary
+		for i, r := range result {
+			if i > 100 && (r == '.' || r == '。') {
+				return result[:i+1]
+			}
+		}
+		return result[:197] + "..."
+	}
+	return result
+}
+
+// cleanArgDescription returns a short description for a CLI flag.
+func cleanArgDescription(s string) string {
+	s = stripTags(s)
+	// Take first sentence or first line
+	s = strings.TrimSpace(s)
+	if idx := strings.Index(s, "\n"); idx > 0 {
+		s = s[:idx]
+	}
+	s = strings.TrimSpace(s)
+	if len(s) > 120 {
+		for i, r := range s {
+			if i > 40 && (r == '.' || r == '。') {
+				return s[:i+1]
+			}
+		}
+		return s[:117] + "..."
+	}
+	return s
+}
+
+// stripTags removes XML/HTML tags from a string.
+func stripTags(s string) string {
+	var b strings.Builder
+	inTag := false
+	for _, r := range s {
+		if r == '<' {
+			inTag = true
+			continue
+		}
+		if r == '>' {
+			inTag = false
+			continue
+		}
+		if !inTag {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 // showToolHelp displays schema-based help for a tool in exposed command context.
