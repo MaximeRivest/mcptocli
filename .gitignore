@@ -1,4 +1,5 @@
 # Binaries
+mcp2cli
 bin/
 dist/
 *.exe

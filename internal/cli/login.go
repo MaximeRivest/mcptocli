@@ -29,7 +29,15 @@ func newLoginCommand(state *State) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "login [server]",
-		Short: "Trigger auth ahead of time",
+		Short: "Authenticate with a remote server",
+		Long: `Trigger the OAuth or bearer authentication flow for a remote server.
+
+Useful for pre-authenticating before using tools, or refreshing tokens.`,
+		Example: `  # Login to an OAuth server
+  mcp2cli login notion
+
+  # Verify bearer token is available
+  mcp2cli login acme`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			explicitServer := ""
 			if !state.Options.Invocation.IsExposedCommand() && command == "" && url == "" {
@@ -112,5 +120,10 @@ func newLoginCommand(state *State) *cobra.Command {
 	cmd.Flags().StringVar(&oauthClientID, "oauth-client-id", "", "OAuth client ID override")
 	cmd.Flags().StringSliceVar(&oauthScopes, "oauth-scope", nil, "OAuth scope (repeatable)")
 	cmd.Flags().DurationVar(&timeout, "timeout", 2*time.Minute, "Login timeout")
+
+	for _, name := range []string{"command", "url", "cwd", "env", "header", "auth", "bearer-env", "oauth-authorize-url", "oauth-token-url", "oauth-client-id", "oauth-scope"} {
+		markConnectionFlag(cmd, name)
+	}
+	useGroupedHelp(cmd)
 	return cmd
 }

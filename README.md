@@ -52,7 +52,7 @@ Two steps: **add** a server once, then **use** it by name.
 ### Step 1: Add a server
 
 ```bash
-mcp2cli add time 'uvx mcp-server-time'
+mcp2cli add time 'npx -y @modelcontextprotocol/server-time'
 ```
 
 That's it. The second argument is the command to start the server. URLs are detected automatically:
@@ -68,8 +68,13 @@ mcp2cli time tools
 ```
 
 ```text
-convert-time      Convert time between timezones
-get-current-time  Get current time in a specific timezone
+Tools (2):
+
+  convert-time      Convert time between timezones.
+  get-current-time  Get current time in a specific timezone.
+
+Inspect:  mcp2cli tools time <tool>
+Invoke:   mcp2cli time <tool> [args...]
 ```
 
 ```bash
@@ -117,6 +122,15 @@ ARGS
 mcp2cli time up                                        # start in background
 mcp2cli time get-current-time 'America/New_York'        # ~10ms instead of ~2s
 mcp2cli time get-current-time 'Europe/London'            # instant
+mcp2cli time down                                       # stop when done
+```
+
+### Share one server across multiple clients
+
+```bash
+mcp2cli time up --share                                # start in HTTP mode
+mcp2cli time get-current-time 'America/New_York'        # mcp2cli uses it automatically
+# Other MCP clients (Claude Desktop, notebooks) can connect to the same server
 mcp2cli time down                                       # stop when done
 ```
 
@@ -237,6 +251,12 @@ t tools
 t get-current-time 'America/New_York'
 ```
 
+Remove an exposed command:
+
+```bash
+mcp2cli expose --remove time
+```
+
 These are real commands on your `PATH`, so `mcp-<TAB>` works in your shell.
 
 ---
@@ -244,9 +264,9 @@ These are real commands on your `PATH`, so `mcp-<TAB>` works in your shell.
 ## Managing servers
 
 ```bash
-mcp2cli add time 'uvx mcp-server-time'    # register
-mcp2cli ls                                 # list all
-mcp2cli rm time                            # remove (cleans up exposed commands too)
+mcp2cli add time 'npx -y @modelcontextprotocol/server-time'   # save
+mcp2cli ls                                                     # list all
+mcp2cli rm time                                                # remove (cleans up exposed commands too)
 ```
 
 `ls` output:
@@ -339,6 +359,7 @@ This is an alpha release. What works today:
 
 Still coming:
 
+- ✅ shared HTTP daemon mode (`up --share`)
 - ⬜ sampling (LLM-backed server requests)
 
 ---

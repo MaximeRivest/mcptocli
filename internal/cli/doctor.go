@@ -45,6 +45,15 @@ func newDoctorCommand(state *State) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "doctor [server]",
 		Short: "Diagnose connection, auth, and config issues",
+		Long: `Run a series of checks against a server: config resolution, command/URL
+validation, authentication, transport handshake, and tool listing.
+
+Each check is reported as ok or fail with a detail message.`,
+		Example: `  # Check a registered server
+  mcp2cli doctor weather
+
+  # Check a one-off remote server
+  mcp2cli doctor --url https://mcp.example.com/sse`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			outputMode, err := normalizeOutputMode(output)
 			if err != nil {
@@ -167,6 +176,11 @@ func newDoctorCommand(state *State) *cobra.Command {
 	cmd.Flags().StringSliceVar(&oauthScopes, "oauth-scope", nil, "OAuth scope (repeatable)")
 	cmd.Flags().DurationVar(&timeout, "timeout", mcpclient.DefaultTimeout(), "Doctor timeout")
 	cmd.Flags().StringVarP(&output, "output", "o", "auto", "Output format: auto, json, or yaml")
+
+	for _, name := range []string{"command", "url", "cwd", "env", "header", "auth", "bearer-env", "oauth-authorize-url", "oauth-token-url", "oauth-client-id", "oauth-scope"} {
+		markConnectionFlag(cmd, name)
+	}
+	useGroupedHelp(cmd)
 	return cmd
 }
 

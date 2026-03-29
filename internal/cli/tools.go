@@ -43,6 +43,21 @@ func newToolsCommand(state *State) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "tools [server] [tool]",
 		Short: "List tools or inspect one tool",
+		Long: `List all tools on a server, or inspect a single tool's schema and usage.
+
+Without a tool name, shows a table of all available tools.
+With a tool name, shows the full usage, arguments, and types.`,
+		Example: `  # List all tools on a registered server
+  mcp2cli tools weather
+
+  # Inspect a specific tool
+  mcp2cli tools weather get-forecast
+
+  # List tools on a one-off server
+  mcp2cli tools --url https://mcp.example.com/sse
+
+  # Output as JSON
+  mcp2cli tools weather -o json`,
 		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 			return metadataToolsCompletion(state, cmd, args, toComplete)
 		},
@@ -120,7 +135,8 @@ func newToolsCommand(state *State) *cobra.Command {
 				usagePrefix := toolUsagePrefix(state, resolved)
 				return renderTool(cmd.OutOrStdout(), tool, spec, usagePrefix, outputMode)
 			}
-			return renderTools(cmd.OutOrStdout(), tools, outputMode)
+			hint := toolsListHints(state, resolved)
+			return renderTools(cmd.OutOrStdout(), tools, outputMode, renderToolsOptions{Hint: hint})
 		},
 	}
 
@@ -137,6 +153,11 @@ func newToolsCommand(state *State) *cobra.Command {
 	cmd.Flags().StringSliceVar(&oauthScopes, "oauth-scope", nil, "OAuth scope (repeatable)")
 	cmd.Flags().DurationVar(&timeout, "timeout", mcpclient.DefaultTimeout(), "Request timeout")
 	cmd.Flags().StringVarP(&output, "output", "o", "auto", "Output format: auto, json, yaml, raw, or table")
+
+	for _, name := range []string{"command", "url", "cwd", "env", "header", "auth", "bearer-env", "oauth-authorize-url", "oauth-token-url", "oauth-client-id", "oauth-scope"} {
+		markConnectionFlag(cmd, name)
+	}
+	useGroupedHelp(cmd)
 	return cmd
 }
 
@@ -430,10 +451,20 @@ func parseToolsArgs(state *State, args []string, command string, url string) (st
 	}
 }
 
-func renderTools(w io.Writer, tools []types.Tool, output string) error {
+type renderToolsOptions struct {
+	// Hint is printed after the table in auto/table mode (e.g. "Use ... to inspect a tool").
+	Hint string
+}
+
+func renderTools(w io.Writer, tools []types.Tool, output string, opts ...renderToolsOptions) error {
 	views := make([]toolView, 0, len(tools))
 	for _, tool := range tools {
 		views = append(views, newToolView(tool))
+	}
+
+	var hint string
+	if len(opts) > 0 {
+		hint = opts[0].Hint
 	}
 
 	switch output {
@@ -447,14 +478,41 @@ func renderTools(w io.Writer, tools []types.Tool, output string) error {
 		}
 		return nil
 	case "table", "auto":
+		fmt.Fprintf(w, "Tools (%d):\n\n", len(views))
 		writer := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 		for _, view := range views {
-			fmt.Fprintf(writer, "%s\t%s\n", view.Name, strings.TrimSpace(view.Description))
+			fmt.Fprintf(writer, "  %s\t%s\n", view.Name, truncateDescription(view.Description))
 		}
-		return writer.Flush()
+		if err := writer.Flush(); err != nil {
+			return err
+		}
+		if hint != "" {
+			fmt.Fprintf(w, "\n%s\n", hint)
+		}
+		return nil
 	default:
 		return exitcode.Newf(exitcode.Usage, "unsupported output format %q", output)
 	}
+}
+
+// truncateDescription returns the first sentence of a description,
+// capped at 60 characters.
+func truncateDescription(desc string) string {
+	desc = strings.TrimSpace(desc)
+	if desc == "" {
+		return ""
+	}
+	// Take first sentence (up to first ". " or ".\n" boundary).
+	if idx := strings.Index(desc, ". "); idx >= 0 {
+		desc = desc[:idx+1]
+	} else if idx := strings.Index(desc, ".\n"); idx >= 0 {
+		desc = desc[:idx+1]
+	}
+	const maxLen = 60
+	if len(desc) > maxLen {
+		return desc[:maxLen-3] + "..."
+	}
+	return desc
 }
 
 func renderTool(w io.Writer, tool types.Tool, spec *inspect.ToolSpec, usagePrefix, output string) error {
@@ -587,6 +645,25 @@ func toolUsagePrefix(state *State, resolved *serverref.Resolved) string {
 		}
 	}
 	return "mcp2cli tool"
+}
+
+// toolsListHints returns the footer hints for the tools listing.
+func toolsListHints(state *State, resolved *serverref.Resolved) string {
+	if state.Options.Invocation.IsExposedCommand() {
+		name := state.Options.Invocation.ExposedCommandName
+		return fmt.Sprintf("Inspect:  %s tools <tool>\nInvoke:   %s <tool> [args...]", name, name)
+	}
+	if resolved != nil && resolved.Server != nil {
+		switch {
+		case resolved.Server.Source == "ephemeral" && resolved.Server.Command != "":
+			return fmt.Sprintf("Inspect:  mcp2cli tools --command %s <tool>\nInvoke:   mcp2cli tool --command %s <tool> [args...]", resolved.Server.Command, resolved.Server.Command)
+		case resolved.Server.Source == "ephemeral" && resolved.Server.URL != "":
+			return fmt.Sprintf("Inspect:  mcp2cli tools --url %s <tool>\nInvoke:   mcp2cli tool --url %s <tool> [args...]", resolved.Server.URL, resolved.Server.URL)
+		case resolved.Server.Name != "":
+			return fmt.Sprintf("Inspect:  mcp2cli tools %s <tool>\nInvoke:   mcp2cli %s <tool> [args...]", resolved.Server.Name, resolved.Server.Name)
+		}
+	}
+	return ""
 }
 
 func findTool(tools []types.Tool, requested string) (types.Tool, bool) {

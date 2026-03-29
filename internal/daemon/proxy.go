@@ -8,10 +8,13 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
+	"time"
 
 	mcpjsonrpc "github.com/maximerivest/mcp2cli/internal/mcp/jsonrpc"
 	"github.com/maximerivest/mcp2cli/internal/mcp/transport/stdio"
@@ -170,6 +173,161 @@ func Run(ctx context.Context, command, dataDir, serverName string) error {
 	}()
 
 	return server.Serve(listener)
+}
+
+// SharedPaths returns the URL file and pid file paths for a shared (HTTP) server.
+func SharedPaths(dataDir, serverName string) (urlPath, pidPath string) {
+	dir := filepath.Join(dataDir, "mcp2cli", "daemons")
+	return filepath.Join(dir, serverName+".url"), filepath.Join(dir, serverName+".pid")
+}
+
+// IsSharedRunning checks if a shared HTTP daemon is running and reachable.
+func IsSharedRunning(dataDir, serverName string) bool {
+	url, err := SharedURL(dataDir, serverName)
+	if err != nil || url == "" {
+		return false
+	}
+	_, pidPath := SharedPaths(dataDir, serverName)
+	pid, err := readPID(pidPath)
+	if err != nil || pid == 0 {
+		return false
+	}
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	if err := proc.Signal(syscall.Signal(0)); err != nil {
+		return false
+	}
+	client := &http.Client{Timeout: 250 * time.Millisecond}
+	resp, err := client.Get(url)
+	if err != nil {
+		return false
+	}
+	resp.Body.Close()
+	return true
+}
+
+// SharedURL reads the URL of a running shared server.
+func SharedURL(dataDir, serverName string) (string, error) {
+	urlPath, _ := SharedPaths(dataDir, serverName)
+	data, err := os.ReadFile(urlPath)
+	if err != nil {
+		return "", fmt.Errorf("read shared URL: %w", err)
+	}
+	return strings.TrimSpace(string(data)), nil
+}
+
+// findFreePort finds an available TCP port.
+func findFreePort() (int, error) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return 0, err
+	}
+	port := l.Addr().(*net.TCPAddr).Port
+	l.Close()
+	return port, nil
+}
+
+// RunShared starts the server command with --http --port and waits for it.
+// The server itself handles MCP HTTP — we just manage the process lifecycle.
+func RunShared(ctx context.Context, command, dataDir, serverName string) error {
+	urlPath, pidPath := SharedPaths(dataDir, serverName)
+
+	if err := os.MkdirAll(filepath.Dir(urlPath), 0o755); err != nil {
+		return fmt.Errorf("create daemon directory: %w", err)
+	}
+
+	// Clean up stale files
+	os.Remove(urlPath)
+	os.Remove(pidPath)
+
+	// Find a free port
+	port, err := findFreePort()
+	if err != nil {
+		return fmt.Errorf("find free port: %w", err)
+	}
+
+	// Append --http --port N to the command
+	fullCommand := fmt.Sprintf("%s --http --port %d", command, port)
+
+	// Start the server as a subprocess (not stdio — it serves HTTP itself)
+	devnull, _ := os.Open(os.DevNull)
+	cmd := exec.CommandContext(ctx, "sh", "-c", fullCommand)
+	cmd.Stdout = devnull
+	cmd.Stderr = devnull
+	cmd.Stdin = nil
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("start server: %w", err)
+	}
+
+	url := fmt.Sprintf("http://127.0.0.1:%d/mcp", port)
+
+	// Wait for the HTTP server to be ready.
+	// Try connecting to /mcp — any response (even 405) means the server is up.
+	httpClient := &http.Client{Timeout: 2 * time.Second}
+	ready := false
+	for i := 0; i < 50; i++ {
+		time.Sleep(100 * time.Millisecond)
+		checkURL := fmt.Sprintf("http://127.0.0.1:%d/mcp", port)
+		resp, err := httpClient.Get(checkURL)
+		if err == nil {
+			resp.Body.Close()
+			ready = true
+			break
+		}
+	}
+
+	if !ready {
+		_ = cmd.Process.Signal(syscall.SIGTERM)
+		return fmt.Errorf("server did not become ready on port %d", port)
+	}
+
+	// Only publish the URL/PID after the server is actually reachable.
+	serverPid := cmd.Process.Pid
+	if err := os.WriteFile(urlPath, []byte(url+"\n"), 0o644); err != nil {
+		_ = cmd.Process.Signal(syscall.SIGTERM)
+		return fmt.Errorf("write url file: %w", err)
+	}
+	if err := os.WriteFile(pidPath, []byte(strconv.Itoa(serverPid)), 0o644); err != nil {
+		os.Remove(urlPath)
+		_ = cmd.Process.Signal(syscall.SIGTERM)
+		return fmt.Errorf("write pid file: %w", err)
+	}
+	defer func() {
+		os.Remove(urlPath)
+		os.Remove(pidPath)
+	}()
+
+	// Wait for signal — then kill the server
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+	<-sigCh
+
+	_ = cmd.Process.Signal(syscall.SIGTERM)
+	_ = cmd.Wait()
+	return nil
+}
+
+// StopShared stops a shared HTTP daemon.
+func StopShared(dataDir, serverName string) error {
+	urlPath, pidPath := SharedPaths(dataDir, serverName)
+	pid, err := readPID(pidPath)
+	if err != nil || pid == 0 {
+		os.Remove(urlPath)
+		os.Remove(pidPath)
+		return fmt.Errorf("server %q is not running", serverName)
+	}
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		os.Remove(urlPath)
+		os.Remove(pidPath)
+		return nil
+	}
+	_ = proc.Signal(syscall.SIGTERM)
+	os.Remove(urlPath)
+	os.Remove(pidPath)
+	return nil
 }
 
 // Stop sends SIGTERM to the daemon and cleans up.

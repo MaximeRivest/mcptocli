@@ -36,6 +36,15 @@ func newResourcesCommand(state *State) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "resources [server] [resource]",
 		Short: "List resources or inspect one resource",
+		Long: `List all resources on a server, or inspect a single resource's metadata.
+
+Without a resource name, shows a table of all available resources.
+With a resource name, shows the URI, MIME type, and description.`,
+		Example: `  # List all resources
+  mcp2cli resources my-server
+
+  # Inspect a specific resource
+  mcp2cli resources my-server config-file`,
 		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 			return metadataResourcesCompletion(state, cmd, args, toComplete)
 		},
@@ -90,6 +99,11 @@ func newResourceCommand(state *State) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "resource [server] <resource>",
 		Short: "Read a resource",
+		Example: `  # Read a resource
+  mcp2cli resource my-server config-file
+
+  # Output as JSON
+  mcp2cli resource my-server config-file -o json`,
 		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 			return metadataResourcesCompletion(state, cmd, args, toComplete)
 		},
@@ -144,6 +158,15 @@ func newPromptsCommand(state *State) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "prompts [server] [prompt]",
 		Short: "List prompts or inspect one prompt",
+		Long: `List all prompts on a server, or inspect a single prompt's arguments.
+
+Without a prompt name, shows a table of all available prompts.
+With a prompt name, shows the arguments and their types.`,
+		Example: `  # List all prompts
+  mcp2cli prompts my-server
+
+  # Inspect a specific prompt
+  mcp2cli prompts my-server summarize`,
 		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 			return metadataPromptsCompletion(state, cmd, args, toComplete)
 		},
@@ -298,6 +321,11 @@ func addMetadataConnectionFlags(cmd *cobra.Command, command, urlValue, cwd *stri
 	cmd.Flags().StringVar(bearerEnv, "bearer-env", "", "Environment variable containing a bearer token")
 	cmd.Flags().DurationVar(timeout, "timeout", mcpclient.DefaultTimeout(), "Request timeout")
 	cmd.Flags().StringVarP(output, "output", "o", "auto", "Output format: auto, json, yaml, raw, or table")
+
+	for _, name := range []string{"command", "url", "cwd", "env", "header", "auth", "bearer-env"} {
+		markConnectionFlag(cmd, name)
+	}
+	useGroupedHelp(cmd)
 }
 
 func parseMetadataArgs(state *State, args []string, command, urlValue, usage string) (string, string, error) {
@@ -348,9 +376,10 @@ func renderResources(w io.Writer, resources []types.Resource, output string) err
 		}
 		return nil
 	case "table", "auto":
+		fmt.Fprintf(w, "Resources (%d):\n\n", len(views))
 		writer := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 		for _, view := range views {
-			fmt.Fprintf(writer, "%s\t%s\t%s\n", view.Name, view.URI, strings.TrimSpace(view.Description))
+			fmt.Fprintf(writer, "  %s\t%s\t%s\n", view.Name, view.URI, truncateDescription(view.Description))
 		}
 		return writer.Flush()
 	default:
@@ -418,9 +447,10 @@ func renderPrompts(w io.Writer, prompts []types.Prompt, output string) error {
 		}
 		return nil
 	case "table", "auto":
+		fmt.Fprintf(w, "Prompts (%d):\n\n", len(views))
 		writer := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 		for _, view := range views {
-			fmt.Fprintf(writer, "%s\t%s\n", view.Name, strings.TrimSpace(view.Description))
+			fmt.Fprintf(writer, "  %s\t%s\n", view.Name, truncateDescription(view.Description))
 		}
 		return writer.Flush()
 	default:

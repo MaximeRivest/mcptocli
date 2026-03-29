@@ -94,3 +94,74 @@ func TestConnectHTTPListAndCallTool(t *testing.T) {
 		t.Fatalf("prompt = %#v", prompt)
 	}
 }
+
+func TestConnectPrefersRunningSharedDaemonAndInitializesSession(t *testing.T) {
+	const sessionID = "mcp-session-test"
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+		var req map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("Decode request: %v", err)
+		}
+		method, _ := req["method"].(string)
+		id := req["id"]
+
+		switch method {
+		case "initialize":
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Mcp-Session-Id", sessionID)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"jsonrpc": "2.0",
+				"id":      id,
+				"result": map[string]any{
+					"protocolVersion": "2024-11-05",
+					"capabilities":    map[string]any{},
+					"serverInfo":      map[string]any{"name": "sharedfixture", "version": "0.1.0"},
+				},
+			})
+		case "notifications/initialized":
+			if got := r.Header.Get("Mcp-Session-Id"); got != sessionID {
+				t.Fatalf("notifications/initialized missing session id: got %q want %q", got, sessionID)
+			}
+			w.WriteHeader(http.StatusAccepted)
+		case "tools/call":
+			if got := r.Header.Get("Mcp-Session-Id"); got != sessionID {
+				t.Fatalf("tools/call missing session id: got %q want %q", got, sessionID)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"jsonrpc": "2.0",
+				"id":      id,
+				"result":  map[string]any{"content": []map[string]any{{"type": "text", "text": "shared: ok"}}},
+			})
+		default:
+			t.Fatalf("unexpected method %q", method)
+		}
+	}))
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	session, err := Connect(ctx, &config.Server{Name: "shared", Command: "dummy"}, nil, ConnectOptions{
+		DaemonCheck: func(serverName string) (*http.Client, string, bool) {
+			if serverName != "shared" {
+				t.Fatalf("serverName = %q, want %q", serverName, "shared")
+			}
+			return server.Client(), server.URL, true
+		},
+	})
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	defer session.Close()
+
+	result, err := session.CallTool(ctx, "echo", map[string]any{"message": "hello"})
+	if err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	if len(result.Content) != 1 || result.Content[0].Text != "shared: ok" {
+		t.Fatalf("result = %#v", result)
+	}
+}

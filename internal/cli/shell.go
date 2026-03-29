@@ -53,6 +53,15 @@ func newShellCommand(state *State) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "shell [server]",
 		Short: "Open an interactive MCP shell",
+		Long: `Open an interactive shell connected to an MCP server.
+
+The shell supports tab completion, history, and all tool/resource/prompt
+commands. Type "help" inside the shell for available commands.`,
+		Example: `  # Open a shell for a registered server
+  mcp2cli shell weather
+
+  # Open a shell for a one-off server
+  mcp2cli shell --url https://mcp.example.com/sse`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			outputMode, err := normalizeOutputMode(output)
 			if err != nil {

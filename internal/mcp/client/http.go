@@ -54,7 +54,14 @@ func Connect(ctx context.Context, server *config.Server, headers map[string]stri
 	if options.DaemonCheck != nil && server != nil && server.Name != "" && server.Name != "(direct)" {
 		if httpClient, url, running := options.DaemonCheck(server.Name); running {
 			c := &HTTPClient{client: httpClient, url: url, headers: copyHeaders(headers)}
-			// Daemon is already initialized — skip handshake
+			if strings.HasPrefix(url, "http://unix/") {
+				// Stdio daemon proxy — already initialized, skip handshake
+				return c, nil
+			}
+			// Shared HTTP daemon — needs full MCP initialization
+			if err := c.Initialize(ctx); err != nil {
+				return nil, err
+			}
 			return c, nil
 		}
 	}

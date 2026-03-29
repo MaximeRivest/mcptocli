@@ -71,7 +71,7 @@ func IsReservedExposedCommand(name string) bool {
 // IsKnownRootCommand reports whether a name is a built-in mcp2cli subcommand.
 func IsKnownRootCommand(name string) bool {
 	switch name {
-	case "help", "completion", "version", "add", "ls", "rm", "expose", "unexpose",
+	case "help", "completion", "version", "add", "ls", "rm", "expose",
 		"login", "tools", "tool", "resources", "resource", "prompts", "prompt",
 		"shell", "doctor", "up", "down", "__daemon":
 		return true

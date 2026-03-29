@@ -19,6 +19,14 @@ func terminalConnectOptions(in io.Reader, errOut io.Writer) mcpclient.ConnectOpt
 }
 
 func daemonCheck(serverName string) (*http.Client, string, bool) {
+	// Check shared (HTTP) mode first — it has a real URL that any client can use
+	if daemon.IsSharedRunning(xdg.DataHome, serverName) {
+		url, err := daemon.SharedURL(xdg.DataHome, serverName)
+		if err == nil && url != "" {
+			return &http.Client{}, url, true
+		}
+	}
+	// Fall back to stdio daemon (Unix socket)
 	if !daemon.IsRunning(xdg.DataHome, serverName) {
 		return nil, "", false
 	}

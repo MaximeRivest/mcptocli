@@ -27,15 +27,18 @@ func newAddCommand(state *State) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "add <name> [command-or-url]",
-		Short: "Register a server",
-		Long: `Register a server for repeated use.
+		Short: "Save a server (local command or remote URL) under a name",
+		Long: `Save a server so you can refer to it by name.
 
 The second argument is the command to start a local server, or a URL for a remote one.
-URLs (starting with http:// or https://) are detected automatically.
+URLs (starting with http:// or https://) are detected automatically.`,
+		Example: `  # Local server (started on demand)
+  mcp2cli add time 'npx -y @modelcontextprotocol/server-time'
 
-Examples:
-  mcp2cli add weather 'npx -y @h1deya/mcp-server-weather'
+  # Remote server with OAuth
   mcp2cli add notion https://mcp.notion.com/mcp --auth oauth
+
+  # Remote server with bearer token
   mcp2cli add acme https://api.acme.dev/mcp --bearer-env ACME_TOKEN`,
 		Args: cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -126,7 +129,7 @@ Examples:
 func newListCommand(state *State) *cobra.Command {
 	return &cobra.Command{
 		Use:   "ls",
-		Short: "List registered servers",
+		Short: "List saved servers",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			repo, err := state.Repo()
 			if err != nil {
@@ -161,7 +164,7 @@ func newListCommand(state *State) *cobra.Command {
 func newRemoveCommand(state *State) *cobra.Command {
 	return &cobra.Command{
 		Use:   "rm <name>",
-		Short: "Remove a registered server",
+		Short: "Remove a saved server",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			repo, err := state.Repo()
@@ -187,12 +190,29 @@ func newRemoveCommand(state *State) *cobra.Command {
 }
 
 func newExposeCommand(state *State) *cobra.Command {
-	var as string
+	var (
+		as     string
+		remove bool
+	)
 
 	cmd := &cobra.Command{
 		Use:   "expose <server>",
-		Short: "Create an exposed command for a server",
-		Args:  cobra.ExactArgs(1),
+		Short: "Make a server available as its own command (e.g. mcp-time)",
+		Long: `Create (or remove) a standalone command for a server.
+
+After exposing, you can use the server directly without the mcp2cli prefix.
+For example, exposing "time" creates "mcp-time" so you can run:
+  mcp-time tools
+  mcp-time get-current-time --timezone UTC`,
+		Example: `  # Create mcp-time command
+  mcp2cli expose time
+
+  # Create with a custom name
+  mcp2cli expose time --as worldclock
+
+  # Remove the exposed command
+  mcp2cli expose --remove time`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			repo, err := state.Repo()
 			if err != nil {
@@ -214,6 +234,17 @@ func newExposeCommand(state *State) *cobra.Command {
 				if err != nil {
 					return err
 				}
+			}
+
+			if remove {
+				if err := repo.RemoveExpose(server.Source, server.Name, exposedName); err != nil {
+					return err
+				}
+				if err := expose.Remove(repo.Paths.ExposeBinDir, exposedName); err != nil {
+					return err
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "removed exposed command %q for server %q\n", exposedName, server.Name)
+				return nil
 			}
 
 			if err := repo.AddExpose(server.Source, server.Name, exposedName); err != nil {
@@ -235,52 +266,7 @@ func newExposeCommand(state *State) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&as, "as", "", "Full exposed command name to create")
-	return cmd
-}
-
-func newUnexposeCommand(state *State) *cobra.Command {
-	var as string
-
-	cmd := &cobra.Command{
-		Use:   "unexpose <server>",
-		Short: "Remove an exposed command",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			repo, err := state.Repo()
-			if err != nil {
-				return err
-			}
-			server, err := repo.ResolveServer(args[0])
-			if err != nil {
-				return err
-			}
-
-			exposedName := strings.TrimSpace(as)
-			if exposedName == "" {
-				exposedName, err = config.DefaultExposeName(server.Name)
-				if err != nil {
-					return err
-				}
-			} else {
-				exposedName, err = config.NormalizeCommandName(exposedName)
-				if err != nil {
-					return err
-				}
-			}
-
-			if err := repo.RemoveExpose(server.Source, server.Name, exposedName); err != nil {
-				return err
-			}
-			if err := expose.Remove(repo.Paths.ExposeBinDir, exposedName); err != nil {
-				return err
-			}
-
-			fmt.Fprintf(cmd.OutOrStdout(), "removed exposed command %q for server %q\n", exposedName, server.Name)
-			return nil
-		},
-	}
-
-	cmd.Flags().StringVar(&as, "as", "", "Full exposed command name to remove")
+	cmd.Flags().StringVar(&as, "as", "", "Custom command name (default: mcp-<server>)")
+	cmd.Flags().BoolVar(&remove, "remove", false, "Remove the exposed command instead of creating it")
 	return cmd
 }
