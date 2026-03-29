@@ -490,10 +490,10 @@ func renderTools(w io.Writer, tools []types.Tool, output string, opts ...renderT
 		}
 		return nil
 	case "table", "auto":
-		fmt.Fprintf(w, "Tools (%d):\n\n", len(views))
+		fmt.Fprintf(w, "%s (%d):\n\n", bold("Tools"), len(views))
 		writer := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 		for _, view := range views {
-			fmt.Fprintf(writer, "  %s\t%s\n", view.Name, truncateDescription(view.Description))
+			fmt.Fprintf(writer, "  %s\t%s\n", cyan(view.Name), dim(truncateDescription(view.Description)))
 		}
 		if err := writer.Flush(); err != nil {
 			return err
@@ -559,7 +559,7 @@ func renderTool(w io.Writer, tool types.Tool, spec *inspect.ToolSpec, usagePrefi
 	case "table", "auto":
 		// NAME — short summary
 		summary := shortSummary(view.Description)
-		fmt.Fprintf(w, "NAME\n  %s", view.Name)
+		fmt.Fprintf(w, "%s\n  %s", bold("NAME"), boldCyan(view.Name))
 		if summary != "" {
 			fmt.Fprintf(w, " — %s", summary)
 		}
@@ -569,12 +569,12 @@ func renderTool(w io.Writer, tool types.Tool, spec *inspect.ToolSpec, usagePrefi
 		desc, examples := parseExamples(view.Description)
 		desc = cleanDescriptionFull(desc)
 		if desc != "" {
-			fmt.Fprintf(w, "\nDESCRIPTION\n%s\n", indentBlock(desc, "  "))
+			fmt.Fprintf(w, "\n%s\n%s\n", bold("DESCRIPTION"), indentBlock(desc, "  "))
 		}
 
 		// USAGE
 		if len(spec.Arguments) > 0 {
-			fmt.Fprintf(w, "\nUSAGE\n  %s %s", usagePrefix, view.Name)
+			fmt.Fprintf(w, "\n%s\n  %s", bold("USAGE"), green(usagePrefix+" "+view.Name))
 			for _, part := range spec.UsageParts() {
 				fmt.Fprintf(w, " %s", part)
 			}
@@ -583,32 +583,32 @@ func renderTool(w io.Writer, tool types.Tool, spec *inspect.ToolSpec, usagePrefi
 
 		// EXAMPLES — rendered as CLI invocations
 		if len(examples) > 0 {
-			fmt.Fprintln(w, "\nEXAMPLES")
+			fmt.Fprintf(w, "\n%s\n", bold("EXAMPLES"))
 			for _, ex := range examples {
 				if ex.Description != "" {
-					fmt.Fprintf(w, "  # %s\n", ex.Description)
+					fmt.Fprintf(w, "  %s\n", dim("# "+ex.Description))
 				}
 				cliExample := jsonToFlags(usagePrefix+" "+view.Name, ex.JSON, spec)
-				fmt.Fprintf(w, "  %s\n\n", cliExample)
+				fmt.Fprintf(w, "  %s\n\n", colorizeExample(cliExample))
 			}
 		}
 
 		// ARGS
 		if len(spec.Arguments) > 0 {
-			fmt.Fprintln(w, "ARGS")
+			fmt.Fprintf(w, "%s\n", bold("ARGS"))
 			writer := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 			for _, arg := range view.Args {
 				details := cleanArgForDisplay(arg.Description)
 				if arg.Required {
-					details = "Required. " + details
+					details = yellow("Required.") + " " + details
 				}
 				if arg.HasDefault {
 					if details != "" {
 						details += " "
 					}
-					details += fmt.Sprintf("Default: %v.", arg.Default)
+					details += dim(fmt.Sprintf("Default: %v.", arg.Default))
 				}
-				fmt.Fprintf(writer, "  --%s %s\t%s\n", arg.Name, arg.Type, strings.TrimSpace(details))
+				fmt.Fprintf(writer, "  %s %s\t%s\n", cyan("--"+arg.Name), dim(arg.Type), strings.TrimSpace(details))
 			}
 			if err := writer.Flush(); err != nil {
 				return err
@@ -1042,6 +1042,38 @@ func indentBlock(s, prefix string) string {
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+// colorizeExample adds ANSI colors to a CLI example string.
+func colorizeExample(s string) string {
+	if !colorEnabled() {
+		return s
+	}
+	var b strings.Builder
+	lines := strings.Split(s, "\n")
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		indent := line[:len(line)-len(strings.TrimLeft(line, " "))]
+		if i == 0 || strings.HasPrefix(trimmed, "mcp") || strings.HasPrefix(trimmed, "mcptocli") {
+			// Command line — green
+			b.WriteString(indent + green(trimmed))
+		} else if strings.HasPrefix(trimmed, "--") {
+			// Flag line — cyan flag, rest normal
+			parts := strings.SplitN(trimmed, " ", 2)
+			flag := parts[0]
+			rest := ""
+			if len(parts) > 1 {
+				rest = " " + parts[1]
+			}
+			b.WriteString(indent + cyan(flag) + rest)
+		} else {
+			b.WriteString(line)
+		}
+		if i < len(lines)-1 {
+			b.WriteString("\n")
+		}
+	}
+	return b.String()
 }
 
 // stripTags removes XML/HTML tags from a string.
