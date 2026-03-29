@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"text/tabwriter"
 	"time"
 
 	"github.com/chzyer/readline"
@@ -139,6 +140,9 @@ func runInteractiveShell(env *shellEnv) error {
 	}
 	defer rl.Close()
 
+	// Welcome banner
+	printShellBanner(rl.Stdout(), env)
+
 	for {
 		line, err := rl.Readline()
 		if err == readline.ErrInterrupt {
@@ -160,6 +164,47 @@ func runInteractiveShell(env *shellEnv) error {
 			fmt.Fprintln(env.writer, exitcode.Format(err))
 		}
 	}
+}
+
+func printShellBanner(w io.Writer, env *shellEnv) {
+	name := shellPrompt(env.resolved.Server)
+	fmt.Fprintf(w, "Connected to %s\n", bold(name))
+
+	if len(env.tools) > 0 {
+		fmt.Fprintf(w, "\n%s (%d):\n", bold("Tools"), len(env.tools))
+		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+		for _, t := range env.tools {
+			cliName := naming.ToKebabCase(t.Name)
+			desc := truncateDescription(t.Description)
+			fmt.Fprintf(tw, "  %s\t%s\n", cyan(cliName), dim(desc))
+		}
+		tw.Flush()
+	}
+
+	if len(env.resources) > 0 {
+		fmt.Fprintf(w, "\n%s (%d):\n", bold("Resources"), len(env.resources))
+		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+		for _, r := range env.resources {
+			desc := truncateDescription(r.Name)
+			if r.Description != "" {
+				desc = truncateDescription(r.Description)
+			}
+			fmt.Fprintf(tw, "  %s\t%s\n", cyan(r.URI), dim(desc))
+		}
+		tw.Flush()
+	}
+
+	if len(env.prompts) > 0 {
+		fmt.Fprintf(w, "\n%s (%d):\n", bold("Prompts"), len(env.prompts))
+		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+		for _, p := range env.prompts {
+			desc := truncateDescription(p.Description)
+			fmt.Fprintf(tw, "  %s\t%s\n", cyan(p.Name), dim(desc))
+		}
+		tw.Flush()
+	}
+
+	fmt.Fprintf(w, "\nType %s for commands, %s to quit.\n\n", bold("help"), bold("exit"))
 }
 
 func dispatchShellLine(env *shellEnv, line string) error {
