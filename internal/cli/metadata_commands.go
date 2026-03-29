@@ -616,7 +616,7 @@ type promptArgView struct {
 
 func newResourceView(resource types.Resource) resourceView {
 	name := resourceDisplayName(resource)
-	return resourceView{Name: name, URI: resource.URI, Description: resource.Description, MimeType: resource.MimeType}
+	return resourceView{Name: name, URI: resource.URI, Description: resource.Description, MimeType: resource.MIMEType}
 }
 
 func newPromptView(prompt types.Prompt) promptView {

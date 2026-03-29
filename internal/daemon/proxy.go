@@ -16,9 +16,8 @@ import (
 	"syscall"
 	"time"
 
-	mcpjsonrpc "github.com/maximerivest/mcp2cli/internal/mcp/jsonrpc"
-	"github.com/maximerivest/mcp2cli/internal/mcp/transport/stdio"
-	"github.com/maximerivest/mcp2cli/internal/mcp/types"
+	mcpgo "github.com/mark3labs/mcp-go/client"
+	"github.com/mark3labs/mcp-go/mcp"
 )
 
 // Paths returns the socket and pid file paths for a server.
@@ -34,7 +33,6 @@ func IsRunning(dataDir, serverName string) bool {
 	if err != nil || pid == 0 {
 		return false
 	}
-	// Check if process exists
 	proc, err := os.FindProcess(pid)
 	if err != nil {
 		return false
@@ -43,7 +41,6 @@ func IsRunning(dataDir, serverName string) bool {
 		cleanup(socketPath, pidPath)
 		return false
 	}
-	// Check socket is connectable
 	conn, err := net.Dial("unix", socketPath)
 	if err != nil {
 		return false
@@ -78,26 +75,27 @@ func Run(ctx context.Context, command, dataDir, serverName string) error {
 	}
 	cleanup(socketPath, pidPath)
 
-	// Start MCP server
-	transport, err := stdio.Start(ctx, command, "", nil)
+	// Start MCP server via mcp-go stdio client
+	args := strings.Fields(command)
+	if len(args) == 0 {
+		return fmt.Errorf("empty command")
+	}
+
+	mcpClient, err := mcpgo.NewStdioMCPClient(args[0], nil, args[1:]...)
 	if err != nil {
 		return fmt.Errorf("start server: %w", err)
 	}
-	defer transport.Close()
-
-	// JSON-RPC client on the server's stdio
-	rpc := mcpjsonrpc.NewClient(transport.Reader(), transport.Writer(), nil, nil)
+	defer mcpClient.Close()
 
 	// Initialize handshake
-	var initResult types.InitializeResult
-	if err := rpc.Call(ctx, "initialize", types.InitializeParams{
-		ProtocolVersion: "2024-11-05",
-		Capabilities:    map[string]any{},
-		ClientInfo:      types.Implementation{Name: "mcp2cli-daemon", Version: "dev"},
-	}, &initResult); err != nil {
+	initReq := mcp.InitializeRequest{}
+	initReq.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
+	initReq.Params.ClientInfo = mcp.Implementation{Name: "mcp2cli-daemon", Version: "dev"}
+
+	initResult, err := mcpClient.Initialize(ctx, initReq)
+	if err != nil {
 		return fmt.Errorf("initialize: %w", err)
 	}
-	_ = rpc.Notify(ctx, "notifications/initialized", map[string]any{})
 
 	// Listen on Unix socket
 	listener, err := net.Listen("unix", socketPath)
@@ -117,7 +115,7 @@ func Run(ctx context.Context, command, dataDir, serverName string) error {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
 
-	// HTTP proxy: forward JSON-RPC to the running server
+	// HTTP proxy: forward JSON-RPC to the running server via mcp-go
 	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "POST only", http.StatusMethodNotAllowed)
@@ -129,8 +127,10 @@ func Run(ctx context.Context, command, dataDir, serverName string) error {
 			return
 		}
 		var request struct {
-			Method string          `json:"method"`
-			Params json.RawMessage `json:"params"`
+			JSONRPC string          `json:"jsonrpc"`
+			ID      json.RawMessage `json:"id"`
+			Method  string          `json:"method"`
+			Params  json.RawMessage `json:"params"`
 		}
 		if err := json.Unmarshal(body, &request); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -138,33 +138,49 @@ func Run(ctx context.Context, command, dataDir, serverName string) error {
 		}
 		if request.Method == "notifications/initialized" || request.Method == "initialize" {
 			// Already initialized — return cached result
-			w.Header().Set("Content-Type", "application/json")
-			result, _ := json.Marshal(map[string]any{
-				"jsonrpc": "2.0",
-				"id":      json.RawMessage(`1`),
-				"result":  initResult,
-			})
-			w.Write(result)
+			writeJSONRPC(w, request.ID, initResult)
 			return
 		}
-		var result json.RawMessage
-		if err := rpc.Call(r.Context(), request.Method, request.Params, &result); err != nil {
-			w.Header().Set("Content-Type", "application/json")
-			errPayload, _ := json.Marshal(map[string]any{
-				"jsonrpc": "2.0",
-				"id":      json.RawMessage(`1`),
-				"error":   map[string]any{"code": -32000, "message": err.Error()},
-			})
-			w.Write(errPayload)
+
+		// Route to mcp-go client based on method
+		var result any
+		var callErr error
+
+		switch request.Method {
+		case "tools/list":
+			var req mcp.ListToolsRequest
+			json.Unmarshal(request.Params, &req)
+			result, callErr = mcpClient.ListTools(r.Context(), req)
+		case "tools/call":
+			var req mcp.CallToolRequest
+			json.Unmarshal(request.Params, &req)
+			result, callErr = mcpClient.CallTool(r.Context(), req)
+		case "resources/list":
+			var req mcp.ListResourcesRequest
+			json.Unmarshal(request.Params, &req)
+			result, callErr = mcpClient.ListResources(r.Context(), req)
+		case "resources/read":
+			var req mcp.ReadResourceRequest
+			json.Unmarshal(request.Params, &req)
+			result, callErr = mcpClient.ReadResource(r.Context(), req)
+		case "prompts/list":
+			var req mcp.ListPromptsRequest
+			json.Unmarshal(request.Params, &req)
+			result, callErr = mcpClient.ListPrompts(r.Context(), req)
+		case "prompts/get":
+			var req mcp.GetPromptRequest
+			json.Unmarshal(request.Params, &req)
+			result, callErr = mcpClient.GetPrompt(r.Context(), req)
+		default:
+			writeJSONRPCError(w, request.ID, -32601, fmt.Sprintf("method %q not supported", request.Method))
 			return
 		}
-		w.Header().Set("Content-Type", "application/json")
-		payload, _ := json.Marshal(map[string]any{
-			"jsonrpc": "2.0",
-			"id":      json.RawMessage(`1`),
-			"result":  result,
-		})
-		w.Write(payload)
+
+		if callErr != nil {
+			writeJSONRPCError(w, request.ID, -32000, callErr.Error())
+			return
+		}
+		writeJSONRPC(w, request.ID, result)
 	})}
 
 	go func() {
@@ -230,7 +246,6 @@ func findFreePort() (int, error) {
 }
 
 // RunShared starts the server command with --http --port and waits for it.
-// The server itself handles MCP HTTP — we just manage the process lifecycle.
 func RunShared(ctx context.Context, command, dataDir, serverName string) error {
 	urlPath, pidPath := SharedPaths(dataDir, serverName)
 
@@ -238,20 +253,16 @@ func RunShared(ctx context.Context, command, dataDir, serverName string) error {
 		return fmt.Errorf("create daemon directory: %w", err)
 	}
 
-	// Clean up stale files
 	os.Remove(urlPath)
 	os.Remove(pidPath)
 
-	// Find a free port
 	port, err := findFreePort()
 	if err != nil {
 		return fmt.Errorf("find free port: %w", err)
 	}
 
-	// Append --http --port N to the command
 	fullCommand := fmt.Sprintf("%s --http --port %d", command, port)
 
-	// Start the server as a subprocess (not stdio — it serves HTTP itself)
 	devnull, _ := os.Open(os.DevNull)
 	cmd := exec.CommandContext(ctx, "sh", "-c", fullCommand)
 	cmd.Stdout = devnull
@@ -263,8 +274,6 @@ func RunShared(ctx context.Context, command, dataDir, serverName string) error {
 
 	url := fmt.Sprintf("http://127.0.0.1:%d/mcp", port)
 
-	// Wait for the HTTP server to be ready.
-	// Try connecting to /mcp — any response (even 405) means the server is up.
 	httpClient := &http.Client{Timeout: 2 * time.Second}
 	ready := false
 	for i := 0; i < 50; i++ {
@@ -283,7 +292,6 @@ func RunShared(ctx context.Context, command, dataDir, serverName string) error {
 		return fmt.Errorf("server did not become ready on port %d", port)
 	}
 
-	// Only publish the URL/PID after the server is actually reachable.
 	serverPid := cmd.Process.Pid
 	if err := os.WriteFile(urlPath, []byte(url+"\n"), 0o644); err != nil {
 		_ = cmd.Process.Signal(syscall.SIGTERM)
@@ -299,7 +307,6 @@ func RunShared(ctx context.Context, command, dataDir, serverName string) error {
 		os.Remove(pidPath)
 	}()
 
-	// Wait for signal — then kill the server
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
 	<-sigCh
@@ -359,4 +366,24 @@ func readPID(path string) (int, error) {
 func cleanup(socketPath, pidPath string) {
 	os.Remove(socketPath)
 	os.Remove(pidPath)
+}
+
+func writeJSONRPC(w http.ResponseWriter, id json.RawMessage, result any) {
+	w.Header().Set("Content-Type", "application/json")
+	payload, _ := json.Marshal(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      json.RawMessage(id),
+		"result":  result,
+	})
+	w.Write(payload)
+}
+
+func writeJSONRPCError(w http.ResponseWriter, id json.RawMessage, code int, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	payload, _ := json.Marshal(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      json.RawMessage(id),
+		"error":   map[string]any{"code": code, "message": message},
+	})
+	w.Write(payload)
 }
