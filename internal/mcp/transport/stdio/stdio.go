@@ -119,8 +119,32 @@ func (t *Transport) Close() error {
 	return closeErr
 }
 
+// Stderr returns any captured stderr output from the subprocess.
+func (t *Transport) Stderr() string {
+	return strings.TrimSpace(t.stderr.String())
+}
+
+// Exited reports whether the subprocess has already exited and its exit code.
+// Returns (false, 0) if the process is still running.
+func (t *Transport) Exited() (bool, int) {
+	select {
+	case err := <-t.done:
+		// Put the result back so Close() still sees it
+		t.done <- err
+		if err == nil {
+			return true, 0
+		}
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			return true, exitErr.ExitCode()
+		}
+		return true, 1
+	default:
+		return false, 0
+	}
+}
+
 func (t *Transport) stderrSuffix() string {
-	stderr := strings.TrimSpace(t.stderr.String())
+	stderr := t.Stderr()
 	if stderr == "" {
 		return ""
 	}

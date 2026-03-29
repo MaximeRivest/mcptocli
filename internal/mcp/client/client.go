@@ -5,9 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"os/exec"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/kballard/go-shellquote"
 	"github.com/maximerivest/mcp2cli/internal/config"
 	"github.com/maximerivest/mcp2cli/internal/exitcode"
 	mcpjsonrpc "github.com/maximerivest/mcp2cli/internal/mcp/jsonrpc"
@@ -45,6 +49,11 @@ func ConnectStdio(ctx context.Context, server *config.Server, options ConnectOpt
 		return nil, exitcode.New(exitcode.Config, "stdio server command cannot be empty")
 	}
 
+	// Pre-flight: check that the executable exists before trying to start it.
+	if err := validateCommand(server.Command); err != nil {
+		return nil, err
+	}
+
 	transport, err := stdio.Start(ctx, server.Command, server.CWD, server.Env)
 	if err != nil {
 		return nil, err
@@ -57,10 +66,73 @@ func ConnectStdio(ctx context.Context, server *config.Server, options ConnectOpt
 	}
 	client.rpc = mcpjsonrpc.NewClient(transport.Reader(), transport.Writer(), transport, client.handleRequest)
 	if err := client.Initialize(ctx); err != nil {
+		initErr := diagnoseCrash(transport, server.Command, err)
 		_ = client.Close()
-		return nil, err
+		return nil, initErr
 	}
 	return client, nil
+}
+
+// validateCommand checks that the first token of a shell command resolves to
+// an executable on the PATH.
+func validateCommand(command string) error {
+	argv, err := shellquote.Split(command)
+	if err != nil {
+		return exitcode.Wrapf(exitcode.Usage, err, "parse command %q", command)
+	}
+	if len(argv) == 0 {
+		return exitcode.New(exitcode.Config, "command cannot be empty")
+	}
+	if _, err := exec.LookPath(argv[0]); err != nil {
+		return exitcode.WithHint(
+			exitcode.Wrapf(exitcode.Config, err, "command %q not found", argv[0]),
+			fmt.Sprintf("make sure %q is installed and on your PATH", argv[0]),
+		)
+	}
+	return nil
+}
+
+// diagnoseCrash produces a better error when the subprocess died during init.
+func diagnoseCrash(transport *stdio.Transport, command string, initErr error) error {
+	// Give the process a moment to flush stderr if it's dying.
+	time.Sleep(50 * time.Millisecond)
+
+	exited, code := transport.Exited()
+	stderr := transport.Stderr()
+
+	// If the error is not EOF / pipe-related, just return it as-is.
+	if !errors.Is(initErr, io.EOF) && !strings.Contains(initErr.Error(), "EOF") {
+		if stderr != "" {
+			return exitcode.Wrapf(exitcode.Transport, initErr, "server %q: %s", command, firstLines(stderr, 5))
+		}
+		return initErr
+	}
+
+	// The process exited before responding — surface stderr.
+	if exited {
+		if stderr != "" {
+			return exitcode.WithHint(
+				exitcode.Newf(exitcode.Transport, "server exited (code %d) before completing MCP handshake", code),
+				firstLines(stderr, 10),
+			)
+		}
+		return exitcode.WithHint(
+			exitcode.Newf(exitcode.Transport, "server exited (code %d) before completing MCP handshake", code),
+			fmt.Sprintf("try running the command directly to see what went wrong:\n  %s", command),
+		)
+	}
+
+	// Process still running but not speaking MCP.
+	if stderr != "" {
+		return exitcode.WithHint(
+			exitcode.New(exitcode.Transport, "server started but did not respond to MCP handshake"),
+			firstLines(stderr, 10),
+		)
+	}
+	return exitcode.WithHint(
+		exitcode.New(exitcode.Transport, "server started but did not respond to MCP handshake"),
+		fmt.Sprintf("the command may not be an MCP server, or it may need arguments.\nTry running it directly:\n  %s", command),
+	)
 }
 
 // Initialize performs the MCP initialize handshake.
@@ -200,6 +272,22 @@ func (c *Client) consumeCallbackErr() error {
 	err := c.callbackErr
 	c.callbackErr = nil
 	return err
+}
+
+// firstLines returns the first n non-empty lines from s.
+func firstLines(s string, n int) string {
+	var lines []string
+	for _, line := range strings.Split(s, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		lines = append(lines, line)
+		if len(lines) >= n {
+			break
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 func wrapRPCError(category exitcode.Category, err error, message string) error {
