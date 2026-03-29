@@ -3,6 +3,8 @@ package cli
 import (
 	"fmt"
 
+	"github.com/maximerivest/mcptocli/internal/cache"
+	"github.com/maximerivest/mcptocli/internal/naming"
 	"github.com/spf13/cobra"
 )
 
@@ -32,13 +34,8 @@ Quick start:
   %s time get-current-time --timezone America/New_York`, use, use, use, use)
 	if opts.Invocation.IsExposedCommand() {
 		use = opts.Invocation.ExposedCommandName
-		short = fmt.Sprintf("Bound CLI for exposed command %q", opts.Invocation.ExposedCommandName)
-		long = fmt.Sprintf(`%s is an exposed mcptocli command bound to a registered MCP server.
-
-Quick start:
-  %s tools
-  %s <tool> [args...]
-  %s shell`, opts.Invocation.ExposedCommandName, use, use, use)
+		long = exposedHelpText(state, use)
+		short = use
 	}
 
 	root := &cobra.Command{
@@ -60,8 +57,12 @@ Quick start:
 		return err
 	}
 
-	// Define command groups so the help page is organized by workflow.
-	if !opts.Invocation.IsExposedCommand() {
+	if opts.Invocation.IsExposedCommand() {
+		root.AddGroup(
+			&cobra.Group{ID: groupUse, Title: "Tools:"},
+			&cobra.Group{ID: groupDaemon, Title: "Commands:"},
+		)
+	} else {
 		root.AddGroup(
 			&cobra.Group{ID: groupServers, Title: "Server Management:"},
 			&cobra.Group{ID: groupUse, Title: "Use a Server:"},
@@ -97,7 +98,25 @@ Quick start:
 	upCmd := newUpCommand(state)
 	downCmd := newDownCommand(state)
 
-	if !opts.Invocation.IsExposedCommand() {
+	if opts.Invocation.IsExposedCommand() {
+		// For exposed commands, add cached tools as top-level subcommands
+		addCachedToolCommands(state, root)
+
+		// Useful commands visible in help
+		shellCmd.GroupID = groupDaemon
+		upCmd.GroupID = groupDaemon
+		downCmd.GroupID = groupDaemon
+		toolsCmd.GroupID = groupDaemon
+		doctorCmd.GroupID = groupDaemon
+
+		// Plumbing commands — still available but hidden from help
+		toolCmd.Hidden = true
+		resourcesCmd.Hidden = true
+		resourceCmd.Hidden = true
+		promptsCmd.Hidden = true
+		promptCmd.Hidden = true
+		loginCmd.Hidden = true
+	} else {
 		toolsCmd.GroupID = groupUse
 		toolCmd.GroupID = groupUse
 		resourcesCmd.GroupID = groupUse
@@ -118,4 +137,63 @@ Quick start:
 	root.AddCommand(newDaemonSharedCommand(state))
 
 	return root, nil
+}
+
+// exposedHelpText builds a short help string for exposed commands.
+func exposedHelpText(state *State, use string) string {
+	metadata := loadExposedMetadata(state)
+	if metadata == nil || len(metadata.Tools) == 0 {
+		return fmt.Sprintf("Run \"%s tools\" to discover available tools.", use)
+	}
+
+	first := naming.ToKebabCase(metadata.Tools[0].Name)
+	return fmt.Sprintf("Examples:\n  %s %s --help\n  %s shell\n  %s up", use, first, use, use)
+}
+
+// loadExposedMetadata loads cached metadata for the bound server.
+func loadExposedMetadata(state *State) *cache.Metadata {
+	server, err := state.BoundServer()
+	if err != nil || server == nil {
+		return nil
+	}
+	store, err := state.MetadataStore()
+	if err != nil || store == nil {
+		return nil
+	}
+	metadata, _ := store.Load(server)
+	return metadata
+}
+
+// addCachedToolCommands adds cached tools as top-level subcommands for exposed commands.
+// Each tool appears in the help listing. Actual invocation and --help display are
+// handled by the "tool" command (which renders schema-based help for exposed commands).
+func addCachedToolCommands(state *State, root *cobra.Command) {
+	metadata := loadExposedMetadata(state)
+	if metadata == nil {
+		return
+	}
+	for _, t := range metadata.Tools {
+		toolName := naming.ToKebabCase(t.Name)
+		originalName := t.Name
+		desc := t.Description
+		if desc == "" {
+			desc = "(no description)"
+		}
+
+		capturedOriginalName := originalName
+
+		stubCmd := &cobra.Command{
+			Use:                toolName + " [args...]",
+			Short:              desc,
+			GroupID:            groupUse,
+			DisableFlagParsing: true,
+			RunE: func(cmd *cobra.Command, args []string) error {
+				toolCmd := newToolCommand(state)
+				newArgs := append([]string{capturedOriginalName}, args...)
+				toolCmd.SetArgs(newArgs)
+				return toolCmd.Execute()
+			},
+		}
+		root.AddCommand(stubCmd)
+	}
 }

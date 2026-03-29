@@ -175,6 +175,10 @@ func newToolCommand(state *State) *cobra.Command {
 				return err
 			}
 			if parsed.Help {
+				// For exposed commands, show schema-based help instead of generic "Invoke a tool"
+				if state.Options.Invocation.IsExposedCommand() && parsed.ToolName != "" {
+					return showToolHelp(cmd, state, parsed.ToolName)
+				}
 				return cmd.Help()
 			}
 			outputMode, err := normalizeOutputMode(parsed.Output)
@@ -368,25 +372,33 @@ func parseToolInvocationTokens(state *State, tokens []string) (*parsedToolInvoca
 		}
 	}
 
-	if parsed.Help {
-		return parsed, nil
-	}
-
 	directMode := state.Options.Invocation.IsExposedCommand() || parsed.Command != "" || parsed.URL != ""
 	if directMode {
+		if len(remaining) >= 1 {
+			parsed.ToolName = remaining[0]
+			parsed.DynamicArgs = append([]string(nil), remaining[1:]...)
+		}
+		if parsed.Help {
+			return parsed, nil
+		}
 		if len(remaining) < 1 {
 			return nil, exitcode.New(exitcode.Usage, "usage: tool [server] <tool> [args...]")
 		}
-		parsed.ToolName = remaining[0]
-		parsed.DynamicArgs = append([]string(nil), remaining[1:]...)
+		return parsed, nil
+	}
+	if len(remaining) >= 2 {
+		parsed.ServerName = remaining[0]
+		parsed.ToolName = remaining[1]
+		parsed.DynamicArgs = append([]string(nil), remaining[2:]...)
+	} else if len(remaining) >= 1 {
+		parsed.ServerName = remaining[0]
+	}
+	if parsed.Help {
 		return parsed, nil
 	}
 	if len(remaining) < 2 {
 		return nil, exitcode.New(exitcode.Usage, "usage: tool [server] <tool> [args...]")
 	}
-	parsed.ServerName = remaining[0]
-	parsed.ToolName = remaining[1]
-	parsed.DynamicArgs = append([]string(nil), remaining[2:]...)
 	return parsed, nil
 }
 
@@ -824,6 +836,28 @@ type toolArgView struct {
 	Required    bool   `json:"required,omitempty" yaml:"required,omitempty"`
 	HasDefault  bool   `json:"hasDefault,omitempty" yaml:"hasDefault,omitempty"`
 	Default     any    `json:"default,omitempty" yaml:"default,omitempty"`
+}
+
+// showToolHelp displays schema-based help for a tool in exposed command context.
+func showToolHelp(cmd *cobra.Command, state *State, toolName string) error {
+	server, err := state.BoundServer()
+	if err != nil || server == nil {
+		return cmd.Help()
+	}
+	cached := cachedToolSchema(state, server, toolName)
+	if cached == nil {
+		return cmd.Help()
+	}
+	spec, err := inspect.InspectTool(*cached)
+	if err != nil {
+		return cmd.Help()
+	}
+
+	progName := state.Options.Invocation.ExposedCommandName
+	if progName == "" {
+		progName = state.Options.Invocation.ProgramName
+	}
+	return renderTool(cmd.OutOrStdout(), *cached, spec, progName, "auto")
 }
 
 func newToolView(tool types.Tool) toolView {
