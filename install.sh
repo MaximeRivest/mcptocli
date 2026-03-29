@@ -88,12 +88,19 @@ setup_completions
 # ── short alias ──────────────────────────────────────────────────────────────
 
 setup_alias() {
-  # Only create the alias if "mcp" is not already a command
+  TARGET="${INSTALL_DIR}/mcp"
+
   if command -v mcp >/dev/null 2>&1; then
-    return
+    EXISTING=$(command -v mcp)
+    # If the existing 'mcp' is our own binary or shim, replace it
+    case "$EXISTING" in
+      "${INSTALL_DIR}"/mcp|"${INSTALL_DIR}"/mcp-*) ;;
+      *)
+        # Some other program owns 'mcp' — don't touch it
+        return ;;
+    esac
   fi
 
-  TARGET="${INSTALL_DIR}/mcp"
   if [ -w "$INSTALL_DIR" ]; then
     ln -sf "${INSTALL_DIR}/${BINARY}" "$TARGET"
   else
