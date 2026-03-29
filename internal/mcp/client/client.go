@@ -6,10 +6,12 @@
 package client
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net/http"
 	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/kballard/go-shellquote"
@@ -66,9 +68,8 @@ func Connect(ctx context.Context, server *config.Server, headers map[string]stri
 
 	// Check for running daemon
 	if options.DaemonCheck != nil && server.Name != "" && server.Name != "(direct)" {
-		if _, url, running := options.DaemonCheck(server.Name); running {
-			daemonServer := &config.Server{URL: url}
-			return ConnectHTTP(ctx, daemonServer, headers, options)
+		if httpClient, url, running := options.DaemonCheck(server.Name); running {
+			return newDaemonSession(httpClient, url), nil
 		}
 	}
 
@@ -191,6 +192,10 @@ func (s *session) CallTool(ctx context.Context, name string, arguments map[strin
 func (s *session) ListResources(ctx context.Context) ([]mcp.Resource, error) {
 	result, err := s.client.ListResources(ctx, mcp.ListResourcesRequest{})
 	if err != nil {
+		// Servers that don't support resources return "method not found" — treat as empty.
+		if isMethodNotFound(err) {
+			return nil, nil
+		}
 		return nil, exitcode.Wrap(exitcode.Protocol, err, "list resources")
 	}
 	return result.Resources, nil
@@ -210,6 +215,10 @@ func (s *session) ReadResource(ctx context.Context, uri string) (*types.ReadReso
 func (s *session) ListPrompts(ctx context.Context) ([]mcp.Prompt, error) {
 	result, err := s.client.ListPrompts(ctx, mcp.ListPromptsRequest{})
 	if err != nil {
+		// Servers that don't support prompts return "method not found" — treat as empty.
+		if isMethodNotFound(err) {
+			return nil, nil
+		}
 		return nil, exitcode.Wrap(exitcode.Protocol, err, "list prompts")
 	}
 	return result.Prompts, nil
@@ -261,6 +270,147 @@ func (a *elicitAdapter) Elicit(ctx context.Context, request mcp.ElicitationReque
 	mcpResult.Action = mcp.ElicitationResponseAction(result.Action)
 	mcpResult.Content = result.Content
 	return mcpResult, nil
+}
+
+// daemonSession talks plain JSON-RPC over HTTP to our local proxy daemon.
+// Unlike StreamableHTTP, it doesn't do session negotiation — just POST.
+type daemonSession struct {
+	httpClient *http.Client
+	url        string
+}
+
+func newDaemonSession(httpClient *http.Client, url string) *daemonSession {
+	return &daemonSession{httpClient: httpClient, url: url}
+}
+
+func (d *daemonSession) rpc(ctx context.Context, method string, params any) (json.RawMessage, error) {
+	reqBody, err := json.Marshal(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  method,
+		"params":  params,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("marshal request: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, d.url, bytes.NewReader(reqBody))
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := d.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("daemon request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var rpcResp struct {
+		Result json.RawMessage `json:"result"`
+		Error  *struct {
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&rpcResp); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+	if rpcResp.Error != nil {
+		return nil, fmt.Errorf("%s", rpcResp.Error.Message)
+	}
+	return rpcResp.Result, nil
+}
+
+func (d *daemonSession) ListTools(ctx context.Context) ([]types.Tool, error) {
+	raw, err := d.rpc(ctx, "tools/list", map[string]any{})
+	if err != nil {
+		return nil, err
+	}
+	var result mcp.ListToolsResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, err
+	}
+	return types.FromMCPTools(result.Tools), nil
+}
+
+func (d *daemonSession) CallTool(ctx context.Context, name string, arguments map[string]any) (*types.CallToolResult, error) {
+	raw, err := d.rpc(ctx, "tools/call", map[string]any{"name": name, "arguments": arguments})
+	if err != nil {
+		return nil, err
+	}
+	var result mcp.CallToolResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, err
+	}
+	return types.FromMCPCallToolResult(&result), nil
+}
+
+func (d *daemonSession) ListResources(ctx context.Context) ([]mcp.Resource, error) {
+	raw, err := d.rpc(ctx, "resources/list", map[string]any{})
+	if err != nil {
+		if isMethodNotFound(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var result mcp.ListResourcesResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, err
+	}
+	return result.Resources, nil
+}
+
+func (d *daemonSession) ReadResource(ctx context.Context, uri string) (*types.ReadResourceResult, error) {
+	raw, err := d.rpc(ctx, "resources/read", map[string]any{"uri": uri})
+	if err != nil {
+		return nil, err
+	}
+	var result mcp.ReadResourceResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, err
+	}
+	return types.FromMCPReadResourceResult(&result), nil
+}
+
+func (d *daemonSession) ListPrompts(ctx context.Context) ([]mcp.Prompt, error) {
+	raw, err := d.rpc(ctx, "prompts/list", map[string]any{})
+	if err != nil {
+		if isMethodNotFound(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var result mcp.ListPromptsResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, err
+	}
+	return result.Prompts, nil
+}
+
+func (d *daemonSession) GetPrompt(ctx context.Context, name string, arguments map[string]string) (*types.GetPromptResult, error) {
+	raw, err := d.rpc(ctx, "prompts/get", map[string]any{"name": name, "arguments": arguments})
+	if err != nil {
+		return nil, err
+	}
+	var result mcp.GetPromptResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, err
+	}
+	return types.FromMCPGetPromptResult(&result), nil
+}
+
+func (d *daemonSession) Close() error {
+	return nil
+}
+
+// isMethodNotFound returns true if the error indicates the server doesn't support the method.
+func isMethodNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := err.Error()
+	return strings.Contains(s, "Method not found") || strings.Contains(s, "method not found")
 }
 
 // splitCommand splits a shell command string into args using proper shell quoting.

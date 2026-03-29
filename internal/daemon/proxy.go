@@ -8,7 +8,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strconv"
@@ -149,27 +148,27 @@ func Run(ctx context.Context, command, dataDir, serverName string) error {
 		switch request.Method {
 		case "tools/list":
 			var req mcp.ListToolsRequest
-			json.Unmarshal(request.Params, &req)
+			json.Unmarshal(request.Params, &req.Params)
 			result, callErr = mcpClient.ListTools(r.Context(), req)
 		case "tools/call":
 			var req mcp.CallToolRequest
-			json.Unmarshal(request.Params, &req)
+			json.Unmarshal(request.Params, &req.Params)
 			result, callErr = mcpClient.CallTool(r.Context(), req)
 		case "resources/list":
 			var req mcp.ListResourcesRequest
-			json.Unmarshal(request.Params, &req)
+			json.Unmarshal(request.Params, &req.Params)
 			result, callErr = mcpClient.ListResources(r.Context(), req)
 		case "resources/read":
 			var req mcp.ReadResourceRequest
-			json.Unmarshal(request.Params, &req)
+			json.Unmarshal(request.Params, &req.Params)
 			result, callErr = mcpClient.ReadResource(r.Context(), req)
 		case "prompts/list":
 			var req mcp.ListPromptsRequest
-			json.Unmarshal(request.Params, &req)
+			json.Unmarshal(request.Params, &req.Params)
 			result, callErr = mcpClient.ListPrompts(r.Context(), req)
 		case "prompts/get":
 			var req mcp.GetPromptRequest
-			json.Unmarshal(request.Params, &req)
+			json.Unmarshal(request.Params, &req.Params)
 			result, callErr = mcpClient.GetPrompt(r.Context(), req)
 		default:
 			writeJSONRPCError(w, request.ID, -32601, fmt.Sprintf("method %q not supported", request.Method))
@@ -256,64 +255,131 @@ func RunShared(ctx context.Context, command, dataDir, serverName string) error {
 	os.Remove(urlPath)
 	os.Remove(pidPath)
 
+	// Start MCP server via mcp-go stdio client (same as regular daemon)
+	args := strings.Fields(command)
+	if len(args) == 0 {
+		return fmt.Errorf("empty command")
+	}
+
+	mcpClient, err := mcpgo.NewStdioMCPClient(args[0], nil, args[1:]...)
+	if err != nil {
+		return fmt.Errorf("start server: %w", err)
+	}
+	defer mcpClient.Close()
+
+	// Initialize handshake
+	initReq := mcp.InitializeRequest{}
+	initReq.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
+	initReq.Params.ClientInfo = mcp.Implementation{Name: "mcptocli-daemon-shared", Version: "dev"}
+
+	initResult, err := mcpClient.Initialize(ctx, initReq)
+	if err != nil {
+		return fmt.Errorf("initialize: %w", err)
+	}
+
+	// Find a free port and listen on TCP
 	port, err := findFreePort()
 	if err != nil {
 		return fmt.Errorf("find free port: %w", err)
 	}
 
-	fullCommand := fmt.Sprintf("%s --http --port %d", command, port)
-
-	devnull, _ := os.Open(os.DevNull)
-	cmd := exec.CommandContext(ctx, "sh", "-c", fullCommand)
-	cmd.Stdout = devnull
-	cmd.Stderr = devnull
-	cmd.Stdin = nil
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("start server: %w", err)
+	listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	if err != nil {
+		return fmt.Errorf("listen on port %d: %w", port, err)
 	}
+	defer listener.Close()
 
 	url := fmt.Sprintf("http://127.0.0.1:%d/mcp", port)
 
-	httpClient := &http.Client{Timeout: 2 * time.Second}
-	ready := false
-	for i := 0; i < 50; i++ {
-		time.Sleep(100 * time.Millisecond)
-		checkURL := fmt.Sprintf("http://127.0.0.1:%d/mcp", port)
-		resp, err := httpClient.Get(checkURL)
-		if err == nil {
-			resp.Body.Close()
-			ready = true
-			break
-		}
-	}
-
-	if !ready {
-		_ = cmd.Process.Signal(syscall.SIGTERM)
-		return fmt.Errorf("server did not become ready on port %d", port)
-	}
-
-	serverPid := cmd.Process.Pid
-	if err := os.WriteFile(urlPath, []byte(url+"\n"), 0o644); err != nil {
-		_ = cmd.Process.Signal(syscall.SIGTERM)
-		return fmt.Errorf("write url file: %w", err)
-	}
-	if err := os.WriteFile(pidPath, []byte(strconv.Itoa(serverPid)), 0o644); err != nil {
-		os.Remove(urlPath)
-		_ = cmd.Process.Signal(syscall.SIGTERM)
+	// Write PID and URL files
+	if err := os.WriteFile(pidPath, []byte(strconv.Itoa(os.Getpid())), 0o644); err != nil {
 		return fmt.Errorf("write pid file: %w", err)
+	}
+	if err := os.WriteFile(urlPath, []byte(url+"\n"), 0o644); err != nil {
+		os.Remove(pidPath)
+		return fmt.Errorf("write url file: %w", err)
 	}
 	defer func() {
 		os.Remove(urlPath)
 		os.Remove(pidPath)
 	}()
 
+	// Handle shutdown
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
-	<-sigCh
 
-	_ = cmd.Process.Signal(syscall.SIGTERM)
-	_ = cmd.Wait()
-	return nil
+	// HTTP proxy: forward JSON-RPC to the running stdio server via mcp-go
+	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "POST only", http.StatusMethodNotAllowed)
+			return
+		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		var request struct {
+			JSONRPC string          `json:"jsonrpc"`
+			ID      json.RawMessage `json:"id"`
+			Method  string          `json:"method"`
+			Params  json.RawMessage `json:"params"`
+		}
+		if err := json.Unmarshal(body, &request); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if request.Method == "notifications/initialized" || request.Method == "initialize" {
+			writeJSONRPC(w, request.ID, initResult)
+			return
+		}
+
+		var result any
+		var callErr error
+
+		switch request.Method {
+		case "tools/list":
+			var req mcp.ListToolsRequest
+			json.Unmarshal(request.Params, &req.Params)
+			result, callErr = mcpClient.ListTools(r.Context(), req)
+		case "tools/call":
+			var req mcp.CallToolRequest
+			json.Unmarshal(request.Params, &req.Params)
+			result, callErr = mcpClient.CallTool(r.Context(), req)
+		case "resources/list":
+			var req mcp.ListResourcesRequest
+			json.Unmarshal(request.Params, &req.Params)
+			result, callErr = mcpClient.ListResources(r.Context(), req)
+		case "resources/read":
+			var req mcp.ReadResourceRequest
+			json.Unmarshal(request.Params, &req.Params)
+			result, callErr = mcpClient.ReadResource(r.Context(), req)
+		case "prompts/list":
+			var req mcp.ListPromptsRequest
+			json.Unmarshal(request.Params, &req.Params)
+			result, callErr = mcpClient.ListPrompts(r.Context(), req)
+		case "prompts/get":
+			var req mcp.GetPromptRequest
+			json.Unmarshal(request.Params, &req.Params)
+			result, callErr = mcpClient.GetPrompt(r.Context(), req)
+		default:
+			writeJSONRPCError(w, request.ID, -32601, fmt.Sprintf("method %q not supported", request.Method))
+			return
+		}
+
+		if callErr != nil {
+			writeJSONRPCError(w, request.ID, -32000, callErr.Error())
+			return
+		}
+		writeJSONRPC(w, request.ID, result)
+	})}
+
+	go func() {
+		<-sigCh
+		server.Close()
+	}()
+
+	return server.Serve(listener)
 }
 
 // StopShared stops a shared HTTP daemon.
