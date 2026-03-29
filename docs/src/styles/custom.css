@@ -183,6 +183,16 @@ nav.sidebar a[aria-current='page'] {
   border-color: var(--sl-color-accent);
 }
 
+/* ── Pagination links (Next / Previous) ────────────────────────── */
+
+.pagination-links a {
+  padding: 0.75rem 1rem !important;
+}
+
+.pagination-links .link-title {
+  font-size: 0.95rem !important;
+}
+
 /* ── TOC ───────────────────────────────────────────────────────── */
 
 starlight-toc a {
